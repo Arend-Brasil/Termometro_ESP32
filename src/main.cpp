@@ -14,6 +14,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_task_wdt.h"
+#include "mbedtls/sha256.h"
 
 #define GFX_BL 23
 #define ROTATION 1
@@ -33,8 +34,11 @@ constexpr uint8_t SHT30_ADDR_A = 0x44;
 constexpr uint8_t SHT30_ADDR_B = 0x45;
 constexpr bool DEFAULT_SHT30_MODE = true;
 
-constexpr float LIMIT_MIN_C = 2.0f;
-constexpr float LIMIT_MAX_C = 8.0f;
+constexpr float DEFAULT_LIMIT_MIN_C = 2.0f;
+constexpr float DEFAULT_LIMIT_MAX_C = 8.0f;
+constexpr float LIMIT_STEP_C = 0.5f;
+constexpr float LIMIT_ABSOLUTE_MIN_C = -40.0f;
+constexpr float LIMIT_ABSOLUTE_MAX_C = 80.0f;
 constexpr uint32_t STATS_RESET_MS = 12UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t HISTORY_SAMPLE_MS = 60UL * 1000UL;
 constexpr uint32_t CLOUD_SEND_MS = 60UL * 1000UL;
@@ -43,6 +47,8 @@ constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 1500;
 constexpr uint32_t INTRO_TIMEOUT_MS = 5000;
 constexpr uint32_t OTA_CONFIRM_MS = 30UL * 1000UL;
 constexpr uint32_t OTA_ROLLBACK_MS = 5UL * 60UL * 1000UL;
+constexpr uint32_t REMOTE_OTA_CHECK_MS = 6UL * 60UL * 60UL * 1000UL;
+constexpr uint32_t REMOTE_OTA_HTTP_TIMEOUT_MS = 20000;
 constexpr uint16_t I2C_TIMEOUT_MS = 50;
 constexpr uint32_t I2C_CLOCK_HZ = 50000;
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 30UL * 1000UL;
@@ -55,6 +61,9 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
+constexpr const char *FIRMWARE_VERSION = "2026.05.25.2";
+constexpr const char *REMOTE_OTA_MANIFEST_URL =
+    "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
 constexpr const char *COMPANY_PHONE = "TEL: definir";
 constexpr const char *COMPANY_EMAIL = "EMAIL: definir";
@@ -96,6 +105,9 @@ bool ota_upload_started = false;
 bool ota_update_finished = false;
 bool ota_pending_boot = false;
 uint32_t ota_boot_ms = 0;
+bool remote_ota_running = false;
+uint32_t last_remote_ota_check_ms = 0;
+String last_remote_ota_status = "nao verificado";
 
 float temp_history[HISTORY_CAPACITY] = {};
 float humidity_history[HISTORY_CAPACITY] = {};
@@ -139,6 +151,8 @@ SensorMode sensor_mode = DEFAULT_SHT30_MODE ? SensorMode::kSht30
 
 enum class GraphStyle { kDots, kBlocks };
 GraphStyle graph_style = GraphStyle::kBlocks;
+float temperature_min_c = DEFAULT_LIMIT_MIN_C;
+float temperature_max_c = DEFAULT_LIMIT_MAX_C;
 
 enum class ViewMode { kStatus, kGraph, kWifi, kConfig };
 ViewMode view_mode = ViewMode::kStatus;
@@ -157,6 +171,12 @@ void save_sensor_mode(SensorMode mode);
 void reset_measurement_state();
 void load_graph_style();
 void save_graph_style(GraphStyle style);
+void load_temperature_limits();
+void save_temperature_limits(float min_c, float max_c);
+void adjust_temperature_limit(bool adjust_min, float delta_c);
+bool check_remote_ota(bool manual);
+void handle_remote_ota();
+void maybe_check_remote_ota();
 void init_watchdog();
 void feed_watchdog();
 
@@ -573,7 +593,11 @@ void handle_root() {
   }
   page += F("<script>const HAS_HUM=");
   page += sensor_has_humidity() ? F("true") : F("false");
-  page += F(";let t=[],h=[];function nums(a){return(a||[]).filter(v=>typeof v==='number')}function tcol(v){if(v<=2)return'#0050ff';if(v>=8)return'#ff0000';let n=(v-2)/6;if(n<.25)return'#00be5a';if(n<.5)return'#f5f5f5';if(n<.72)return'#ffe600';if(n<.9)return'#ff7d00';return'#ff0000'}function range(a,minRange){let mn=Math.min(...a),mx=Math.max(...a),r=mx-mn,p=Math.max(1,r*.2);mn-=p;mx+=p;if(mx-mn<minRange){let m=(mx+mn)/2;mn=m-minRange/2;mx=m+minRange/2}return[mn,mx]}function drawOne(id,a,col,minRange,fixed){a=nums(a);const c=document.getElementById(id);if(!c)return;const x=c.getContext('2d'),w=c.width,H=c.height;x.clearRect(0,0,w,H);x.strokeStyle='#303a44';x.strokeRect(0,0,w,H);let mn=fixed?fixed[0]:0,mx=fixed?fixed[1]:0;if(a.length>=2&&!fixed){[mn,mx]=range(a,minRange)}x.fillStyle='#9aa7b2';x.font='12px Arial';x.fillText(String(mx),w-26,20);x.fillText(String(mn),w-26,H-12);if(a.length<2)return;x.strokeStyle='#ff3333';x.beginPath();x.moveTo(10,10);x.lineTo(w-34,10);x.moveTo(10,H-10);x.lineTo(w-34,H-10);x.stroke();x.beginPath();x.strokeStyle=col;x.lineWidth=2;for(let i=0;i<a.length;i++){let v=Math.max(mn,Math.min(mx,a[i])),px=10+i*(w-44)/Math.max(1,a.length-1),py=10+(mx-v)*(H-20)/(mx-mn);i?x.lineTo(px,py):x.moveTo(px,py)}x.stroke();for(let i=0;i<a.length;i++){let v=Math.max(mn,Math.min(mx,a[i])),px=10+i*(w-44)/Math.max(1,a.length-1),py=10+(mx-v)*(H-20)/(mx-mn);x.fillStyle=fixed?tcol(a[i]):col;x.fillRect(px-2,py-2,4,4)}}function draw(){drawOne('tempChart',t,'#ff9d00',6,[2,8]);if(HAS_HUM)drawOne('humChart',h,'#a45bff',10)}async function upd(){try{let r=await fetch('/data',{cache:'no-store'}),d=await r.json();document.getElementById('temp').textContent=d.temp_text;document.getElementById('hum').textContent=d.hum_text;document.getElementById('tmin').textContent=d.temp_min_text;document.getElementById('tmax').textContent=d.temp_max_text;document.getElementById('hmin').textContent=d.humidity_min_text;document.getElementById('hmax').textContent=d.humidity_max_text;t=d.temp_history||[];h=d.humidity_history||[];draw()}catch(e){}}setInterval(upd,10000);upd();</script></div></body></html>");
+  page += F(";const TMIN=");
+  page += String(temperature_min_c, 1);
+  page += F(",TMAX=");
+  page += String(temperature_max_c, 1);
+  page += F(";let t=[],h=[];function nums(a){return(a||[]).filter(v=>typeof v==='number')}function tcol(v){if(v<=TMIN)return'#0050ff';if(v>=TMAX)return'#ff0000';let n=(v-TMIN)/Math.max(.1,TMAX-TMIN);if(n<.25)return'#00be5a';if(n<.5)return'#f5f5f5';if(n<.72)return'#ffe600';if(n<.9)return'#ff7d00';return'#ff0000'}function range(a,minRange){let mn=Math.min(...a),mx=Math.max(...a),r=mx-mn,p=Math.max(1,r*.2);mn-=p;mx+=p;if(mx-mn<minRange){let m=(mx+mn)/2;mn=m-minRange/2;mx=m+minRange/2}return[mn,mx]}function drawOne(id,a,col,minRange,fixed){a=nums(a);const c=document.getElementById(id);if(!c)return;const x=c.getContext('2d'),w=c.width,H=c.height;x.clearRect(0,0,w,H);x.strokeStyle='#303a44';x.strokeRect(0,0,w,H);let mn=fixed?fixed[0]:0,mx=fixed?fixed[1]:0;if(a.length>=2&&!fixed){[mn,mx]=range(a,minRange)}x.fillStyle='#9aa7b2';x.font='12px Arial';x.fillText(String(mx),w-32,20);x.fillText(String(mn),w-32,H-12);if(a.length<2)return;x.strokeStyle='#ff3333';x.beginPath();x.moveTo(10,10);x.lineTo(w-38,10);x.moveTo(10,H-10);x.lineTo(w-38,H-10);x.stroke();x.beginPath();x.strokeStyle=col;x.lineWidth=2;for(let i=0;i<a.length;i++){let v=Math.max(mn,Math.min(mx,a[i])),px=10+i*(w-48)/Math.max(1,a.length-1),py=10+(mx-v)*(H-20)/(mx-mn);i?x.lineTo(px,py):x.moveTo(px,py)}x.stroke();for(let i=0;i<a.length;i++){let v=Math.max(mn,Math.min(mx,a[i])),px=10+i*(w-48)/Math.max(1,a.length-1),py=10+(mx-v)*(H-20)/(mx-mn);x.fillStyle=fixed?tcol(a[i]):col;x.fillRect(px-2,py-2,4,4)}}function draw(){drawOne('tempChart',t,'#ff9d00',TMAX-TMIN,[TMIN,TMAX]);if(HAS_HUM)drawOne('humChart',h,'#a45bff',10)}async function upd(){try{let r=await fetch('/data',{cache:'no-store'}),d=await r.json();document.getElementById('temp').textContent=d.temp_text;document.getElementById('hum').textContent=d.hum_text;document.getElementById('tmin').textContent=d.temp_min_text;document.getElementById('tmax').textContent=d.temp_max_text;document.getElementById('hmin').textContent=d.humidity_min_text;document.getElementById('hmax').textContent=d.humidity_max_text;t=d.temp_history||[];h=d.humidity_history||[];draw()}catch(e){}}setInterval(upd,10000);upd();</script></div></body></html>");
   server.send(200, "text/html", page);
 }
 
@@ -794,6 +818,53 @@ void save_graph_style(GraphStyle style) {
   Serial.printf("Estilo de grafico alterado: %s\n", graph_style_label());
 }
 
+void load_temperature_limits() {
+  prefs.begin("system", true);
+  float min_c = prefs.getFloat("limit_min", DEFAULT_LIMIT_MIN_C);
+  float max_c = prefs.getFloat("limit_max", DEFAULT_LIMIT_MAX_C);
+  prefs.end();
+  if (!isfinite(min_c) || !isfinite(max_c) || min_c >= max_c) {
+    min_c = DEFAULT_LIMIT_MIN_C;
+    max_c = DEFAULT_LIMIT_MAX_C;
+  }
+  temperature_min_c = constrain(min_c, LIMIT_ABSOLUTE_MIN_C, LIMIT_ABSOLUTE_MAX_C - LIMIT_STEP_C);
+  temperature_max_c = constrain(max_c, temperature_min_c + LIMIT_STEP_C, LIMIT_ABSOLUTE_MAX_C);
+  Serial.printf("Limites de temperatura: %.1f a %.1f C\n", temperature_min_c,
+                temperature_max_c);
+}
+
+void save_temperature_limits(float min_c, float max_c) {
+  if (!isfinite(min_c) || !isfinite(max_c)) {
+    return;
+  }
+  min_c = constrain(min_c, LIMIT_ABSOLUTE_MIN_C, LIMIT_ABSOLUTE_MAX_C - LIMIT_STEP_C);
+  max_c = constrain(max_c, min_c + LIMIT_STEP_C, LIMIT_ABSOLUTE_MAX_C);
+  if (fabsf(min_c - temperature_min_c) < 0.01f &&
+      fabsf(max_c - temperature_max_c) < 0.01f) {
+    return;
+  }
+  temperature_min_c = min_c;
+  temperature_max_c = max_c;
+  prefs.begin("system", false);
+  prefs.putFloat("limit_min", temperature_min_c);
+  prefs.putFloat("limit_max", temperature_max_c);
+  prefs.end();
+  ui_dirty = true;
+  Serial.printf("Limites alterados: %.1f a %.1f C\n", temperature_min_c,
+                temperature_max_c);
+}
+
+void adjust_temperature_limit(bool adjust_min, float delta_c) {
+  float min_c = temperature_min_c;
+  float max_c = temperature_max_c;
+  if (adjust_min) {
+    min_c += delta_c;
+  } else {
+    max_c += delta_c;
+  }
+  save_temperature_limits(min_c, max_c);
+}
+
 bool ota_authenticated() {
   String pass = ota_password();
   return server.authenticate(OTA_USER, pass.c_str());
@@ -978,10 +1049,15 @@ void handle_config_page() {
   }
 
   String page;
-  page.reserve(2600);
+  page.reserve(3400);
   page += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
-  page += F("<title>Config avancada</title><style>body{font-family:Arial,sans-serif;margin:20px;max-width:620px;background:#101418;color:#f6f7f9}.card{border:1px solid #33404a;padding:14px;margin:12px 0;background:#182028}label{display:block;margin:12px 0;padding:10px;border:1px solid #33404a}button{margin-top:12px;padding:12px 16px;font-size:16px}code{background:#26313a;padding:2px 5px}a{color:#7fd7ff}.warn{color:#f4c542}</style></head><body>");
+  page += F("<title>Config avancada</title><style>body{font-family:Arial,sans-serif;margin:20px;max-width:620px;background:#101418;color:#f6f7f9}.card{border:1px solid #33404a;padding:14px;margin:12px 0;background:#182028}label{display:block;margin:12px 0;padding:10px;border:1px solid #33404a}input[type=number]{box-sizing:border-box;width:100%;padding:10px;font-size:16px;background:#f6f7f9;color:#101418}button{margin-top:12px;padding:12px 16px;font-size:16px}code{background:#26313a;padding:2px 5px}a{color:#7fd7ff}.warn{color:#f4c542}</style></head><body>");
   page += F("<h2>Configuracao avancada</h2><p><a href='/ota'>Voltar ao OTA</a> &nbsp; <a href='/'>Painel</a></p>");
+  page += F("<div class='card'><p>Versao atual: <code>");
+  page += FIRMWARE_VERSION;
+  page += F("</code><br>OTA remoto: <code>");
+  page += last_remote_ota_status;
+  page += F("</code></p><form method='post' action='/remote-ota'><button type='submit'>Verificar atualizacao remota</button></form></div>");
   page += F("<div class='card'><p>Sensor atual: <code>");
   page += sensor_mode_label();
   page += F("</code></p><form method='post' action='/config'>");
@@ -1000,7 +1076,12 @@ void handle_config_page() {
   page += F("<label><input type='radio' name='graph' value='dots'");
   if (graph_style == GraphStyle::kDots) page += F(" checked");
   page += F("> Pontos</label>");
-  page += F("<p class='warn'>Ao trocar o modo, min/max e historico local sao reiniciados.</p>");
+  page += F("<p>Limites de temperatura:</p><label>Minimo C<input type='number' name='limit_min' step='0.5' value='");
+  page += String(temperature_min_c, 1);
+  page += F("'></label><label>Maximo C<input type='number' name='limit_max' step='0.5' value='");
+  page += String(temperature_max_c, 1);
+  page += F("'></label>");
+  page += F("<p class='warn'>Ao trocar o modo, min/max do dia e historico local sao reiniciados.</p>");
   page += F("<button type='submit'>Salvar configuracao</button></form></div>");
   page += F("</body></html>");
   server.send(200, "text/html", page);
@@ -1019,8 +1100,29 @@ void handle_save_config() {
   if (graph.length() > 0) {
     save_graph_style(graph == "dots" ? GraphStyle::kDots : GraphStyle::kBlocks);
   }
+  if (server.hasArg("limit_min") && server.hasArg("limit_max")) {
+    save_temperature_limits(server.arg("limit_min").toFloat(),
+                            server.arg("limit_max").toFloat());
+  }
   server.sendHeader("Location", "/config", true);
   server.send(303, "text/plain", "");
+}
+
+void handle_remote_ota() {
+  if (!require_ota_auth()) {
+    return;
+  }
+  bool started = check_remote_ota(true);
+  String page;
+  page.reserve(900);
+  page += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
+  page += F("<title>OTA remoto</title><style>body{font-family:Arial,sans-serif;margin:20px;background:#101418;color:#f6f7f9}a{color:#7fd7ff}code{background:#26313a;padding:2px 5px}</style></head><body>");
+  page += F("<h2>OTA remoto</h2><p>");
+  page += last_remote_ota_status;
+  page += F("</p><p>Versao atual: <code>");
+  page += FIRMWARE_VERSION;
+  page += F("</code></p><p><a href='/config'>Voltar</a></p></body></html>");
+  server.send(started ? 200 : 503, "text/html", page);
 }
 
 String url_encode(const String &value) {
@@ -1038,6 +1140,208 @@ String url_encode(const String &value) {
     }
   }
   return out;
+}
+
+String json_string_value(const String &json, const char *key) {
+  String pattern = String("\"") + key + "\"";
+  int pos = json.indexOf(pattern);
+  if (pos < 0) return "";
+  pos = json.indexOf(':', pos + pattern.length());
+  if (pos < 0) return "";
+  pos = json.indexOf('"', pos);
+  if (pos < 0) return "";
+  int end = json.indexOf('"', pos + 1);
+  if (end < 0) return "";
+  return json.substring(pos + 1, end);
+}
+
+String sha256_hex(const uint8_t hash[32]) {
+  const char *hex = "0123456789abcdef";
+  String out;
+  out.reserve(64);
+  for (size_t i = 0; i < 32; ++i) {
+    out += hex[(hash[i] >> 4) & 0x0F];
+    out += hex[hash[i] & 0x0F];
+  }
+  return out;
+}
+
+bool download_and_apply_remote_firmware(const String &url,
+                                        const String &expected_sha256) {
+  if (url.length() == 0 || expected_sha256.length() != 64) {
+    last_remote_ota_status = "manifesto remoto sem URL ou SHA-256 valido";
+    return false;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(REMOTE_OTA_HTTP_TIMEOUT_MS);
+
+  HTTPClient http;
+  http.setTimeout(REMOTE_OTA_HTTP_TIMEOUT_MS);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  if (!http.begin(client, url)) {
+    last_remote_ota_status = "falha ao abrir URL do firmware";
+    return false;
+  }
+
+  int code = http.GET();
+  if (code != HTTP_CODE_OK) {
+    last_remote_ota_status = String("download firmware HTTP ") + code;
+    http.end();
+    return false;
+  }
+
+  int content_length = http.getSize();
+  if (!Update.begin(content_length > 0 ? content_length : UPDATE_SIZE_UNKNOWN,
+                    U_FLASH)) {
+    last_remote_ota_status = "sem espaco para OTA remoto";
+    Update.printError(Serial);
+    http.end();
+    return false;
+  }
+
+  WiFiClient *stream = http.getStreamPtr();
+  mbedtls_sha256_context sha_ctx;
+  mbedtls_sha256_init(&sha_ctx);
+  mbedtls_sha256_starts(&sha_ctx, 0);
+
+  uint8_t buffer[1024];
+  size_t written = 0;
+  uint32_t last_progress_ms = millis();
+  while (http.connected() &&
+         (content_length < 0 || written < static_cast<size_t>(content_length))) {
+    feed_watchdog();
+    server.handleClient();
+    size_t available = stream->available();
+    if (available == 0) {
+      if (millis() - last_progress_ms > REMOTE_OTA_HTTP_TIMEOUT_MS) {
+        last_remote_ota_status = "timeout baixando firmware";
+        Update.abort();
+        http.end();
+        mbedtls_sha256_free(&sha_ctx);
+        return false;
+      }
+      delay(10);
+      continue;
+    }
+
+    size_t to_read = min(available, sizeof(buffer));
+    int read_len = stream->readBytes(buffer, to_read);
+    if (read_len <= 0) continue;
+    last_progress_ms = millis();
+    mbedtls_sha256_update(&sha_ctx, buffer, read_len);
+    if (Update.write(buffer, read_len) != static_cast<size_t>(read_len)) {
+      last_remote_ota_status = "falha gravando firmware remoto";
+      Update.printError(Serial);
+      Update.abort();
+      http.end();
+      mbedtls_sha256_free(&sha_ctx);
+      return false;
+    }
+    written += read_len;
+  }
+
+  uint8_t digest[32];
+  mbedtls_sha256_finish(&sha_ctx, digest);
+  mbedtls_sha256_free(&sha_ctx);
+  http.end();
+
+  String actual_sha256 = sha256_hex(digest);
+  actual_sha256.toLowerCase();
+  String expected = expected_sha256;
+  expected.toLowerCase();
+  if (actual_sha256 != expected) {
+    last_remote_ota_status = "SHA-256 do firmware remoto nao confere";
+    Serial.printf("OTA remoto: SHA esperado %s obtido %s\n", expected.c_str(),
+                  actual_sha256.c_str());
+    Update.abort();
+    return false;
+  }
+
+  if (!Update.end(true)) {
+    last_remote_ota_status = "falha finalizando OTA remoto";
+    Update.printError(Serial);
+    return false;
+  }
+
+  mark_ota_pending_rollback();
+  last_remote_ota_status = "firmware remoto recebido, reiniciando";
+  Serial.printf("OTA remoto: atualizado %u bytes\n", unsigned(written));
+  delay(500);
+  ESP.restart();
+  return true;
+}
+
+bool check_remote_ota(bool manual) {
+  if (remote_ota_running) {
+    last_remote_ota_status = "OTA remoto ja em andamento";
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    last_remote_ota_status = "sem Wi-Fi para verificar OTA remoto";
+    return false;
+  }
+
+  remote_ota_running = true;
+  last_remote_ota_check_ms = millis();
+  last_remote_ota_status = "verificando manifesto remoto";
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(REMOTE_OTA_HTTP_TIMEOUT_MS);
+
+  HTTPClient http;
+  http.setTimeout(REMOTE_OTA_HTTP_TIMEOUT_MS);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  if (!http.begin(client, REMOTE_OTA_MANIFEST_URL)) {
+    last_remote_ota_status = "falha ao abrir manifesto remoto";
+    remote_ota_running = false;
+    return false;
+  }
+
+  int code = http.GET();
+  String body = http.getString();
+  http.end();
+  if (code != HTTP_CODE_OK) {
+    last_remote_ota_status = String("manifesto remoto HTTP ") + code;
+    remote_ota_running = false;
+    return false;
+  }
+
+  String version = json_string_value(body, "version");
+  String firmware_url = json_string_value(body, "firmware_url");
+  String sha256 = json_string_value(body, "sha256");
+  if (version.length() == 0) {
+    last_remote_ota_status = "manifesto remoto sem versao";
+    remote_ota_running = false;
+    return false;
+  }
+
+  Serial.printf("OTA remoto: atual=%s remoto=%s\n", FIRMWARE_VERSION,
+                version.c_str());
+  if (version == FIRMWARE_VERSION) {
+    last_remote_ota_status = manual ? "ja esta na ultima versao"
+                                    : "sem atualizacao remota";
+    remote_ota_running = false;
+    return false;
+  }
+
+  last_remote_ota_status = String("baixando versao ") + version;
+  bool ok = download_and_apply_remote_firmware(firmware_url, sha256);
+  remote_ota_running = false;
+  return ok;
+}
+
+void maybe_check_remote_ota() {
+  if (remote_ota_running || WiFi.status() != WL_CONNECTED || ota_pending_boot) {
+    return;
+  }
+  uint32_t now = millis();
+  if (last_remote_ota_check_ms == 0 ||
+      now - last_remote_ota_check_ms >= REMOTE_OTA_CHECK_MS) {
+    check_remote_ota(false);
+  }
 }
 
 bool cloud_send_sample(const CloudSample &sample) {
@@ -1342,12 +1646,14 @@ void init_wifi() {
   server.on("/ota", HTTP_POST, handle_ota_done, handle_ota_upload);
   server.on("/config", HTTP_GET, handle_config_page);
   server.on("/config", HTTP_POST, handle_save_config);
+  server.on("/remote-ota", HTTP_POST, handle_remote_ota);
   server.begin();
 
   connect_known_networks();
   load_ota_pending_state();
   load_sensor_mode();
   load_graph_style();
+  load_temperature_limits();
 
   Serial.printf("Codigo do termometro: %s\n", device_id.c_str());
   Serial.printf("AP config: %s senha 12345678 IP 192.168.4.1\n",
@@ -1550,7 +1856,8 @@ void update_daily_min_max(float temp_c, float humidity_pct) {
 }
 
 bool temperature_alarm(float temp_c, esp_err_t result) {
-  return result == ESP_OK && (temp_c < LIMIT_MIN_C || temp_c > LIMIT_MAX_C);
+  return result == ESP_OK &&
+         (temp_c < temperature_min_c || temp_c > temperature_max_c);
 }
 
 void push_history_sample(float temp_c, float humidity_pct) {
@@ -1588,14 +1895,15 @@ uint16_t mix_color(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2,
 }
 
 uint16_t graph_temperature_color(float value) {
-  if (value <= LIMIT_MIN_C) {
+  if (value <= temperature_min_c) {
     return rgb565(0, 80, 255);
   }
-  if (value >= LIMIT_MAX_C) {
+  if (value >= temperature_max_c) {
     return rgb565(255, 0, 0);
   }
 
-  float norm = (value - LIMIT_MIN_C) / max(0.1f, LIMIT_MAX_C - LIMIT_MIN_C);
+  float norm = (value - temperature_min_c) /
+               max(0.1f, temperature_max_c - temperature_min_c);
   if (norm < 0.25f) {
     return mix_color(0, 80, 255, 0, 190, 90, norm / 0.25f);
   }
@@ -1617,8 +1925,8 @@ void draw_block_graph(int plot_x, int plot_y, int plot_w, int plot_h) {
   int step = cell + gap;
   int columns = max(1, plot_w / step);
   size_t plotted_count = min<size_t>(temp_history_count, columns);
-  float min_v = LIMIT_MIN_C;
-  float max_v = LIMIT_MAX_C;
+  float min_v = temperature_min_c;
+  float max_v = temperature_max_c;
   for (size_t p = 0; p < plotted_count; ++p) {
     size_t source_index = temp_history_count <= size_t(columns)
                               ? p
@@ -1636,7 +1944,10 @@ void draw_graph(int x, int y, int w, int h, esp_err_t result) {
   gfx->drawRect(x, y, w, h, result == ESP_OK ? COLOR_CYAN : COLOR_RED);
   bool compact = h < 48;
   if (!compact) {
-    text(x + 6, y + 6, "HISTORICO REF 2-8C", COLOR_YELLOW, 1);
+    char title[28];
+    snprintf(title, sizeof(title), "HIST REF %.1f-%.1fC", temperature_min_c,
+             temperature_max_c);
+    text(x + 6, y + 6, title, COLOR_YELLOW, 1);
   }
 
   if (result != ESP_OK) {
@@ -1649,8 +1960,8 @@ void draw_graph(int x, int y, int w, int h, esp_err_t result) {
     return;
   }
 
-  float min_v = LIMIT_MIN_C;
-  float max_v = LIMIT_MAX_C;
+  float min_v = temperature_min_c;
+  float max_v = temperature_max_c;
 
   char scale_text[12];
   int plot_x = x + 6;
@@ -1788,7 +2099,10 @@ void draw_graph_view(float temp_c, esp_err_t result) {
     snprintf(temp_text, sizeof(temp_text), "SENSOR ERR");
   }
   text(12, 34, temp_text, result == ESP_OK ? COLOR_PURPLE : COLOR_RED, 2);
-  text(146, 40, "REF 2.0-8.0 C", COLOR_YELLOW, 1);
+  char ref_text[24];
+  snprintf(ref_text, sizeof(ref_text), "REF %.1f-%.1f C", temperature_min_c,
+           temperature_max_c);
+  text(146, 40, ref_text, COLOR_YELLOW, 1);
   draw_graph(10, 58, 300, 86, result);
   menu_bar();
 }
@@ -1825,33 +2139,53 @@ void draw_wifi_view() {
 void draw_config_view() {
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_YELLOW);
-  text(12, 10, "CONFIG", COLOR_WHITE, 2);
-  text(112, 14, graph_style_label(), COLOR_DIM, 1);
-  text(12, 32, "Sensor:", COLOR_YELLOW, 1);
-  text(72, 36, sensor_mode_label(), COLOR_CYAN, 1);
+  text(12, 8, "CONFIG", COLOR_WHITE, 2);
+  char limit_text[28];
+  snprintf(limit_text, sizeof(limit_text), "REF %.1f A %.1f C",
+           temperature_min_c, temperature_max_c);
+  text(112, 12, limit_text, COLOR_CYAN, 1);
 
   uint16_t sht_color = sensor_mode == SensorMode::kSht30 ? COLOR_PURPLE : 0x39E7;
   uint16_t ds_color = sensor_mode == SensorMode::kDs18b20 ? COLOR_PURPLE : 0x39E7;
   uint16_t block_color = graph_style == GraphStyle::kBlocks ? COLOR_PURPLE : 0x39E7;
   uint16_t dot_color = graph_style == GraphStyle::kDots ? COLOR_PURPLE : 0x39E7;
-  gfx->fillRect(12, 50, 142, 28, sht_color);
-  gfx->drawRect(12, 50, 142, 28, COLOR_WHITE);
-  text(22, 60, "SHT30", COLOR_WHITE, 2);
+  gfx->fillRect(12, 34, 142, 22, sht_color);
+  gfx->drawRect(12, 34, 142, 22, COLOR_WHITE);
+  text(42, 41, "SHT30", COLOR_WHITE, 1);
 
-  gfx->fillRect(166, 50, 142, 28, ds_color);
-  gfx->drawRect(166, 50, 142, 28, COLOR_WHITE);
-  text(176, 60, "DS18B20", COLOR_WHITE, 2);
+  gfx->fillRect(166, 34, 142, 22, ds_color);
+  gfx->drawRect(166, 34, 142, 22, COLOR_WHITE);
+  text(204, 41, "DS18B20", COLOR_WHITE, 1);
 
-  text(12, 88, "Grafico:", COLOR_YELLOW, 1);
-  text(96, 88, "REF 2.0 A 8.0 C", COLOR_CYAN, 1);
-  gfx->fillRect(12, 102, 142, 28, block_color);
-  gfx->drawRect(12, 102, 142, 28, COLOR_WHITE);
-  text(22, 112, "BLOCOS", COLOR_WHITE, 2);
+  gfx->fillRect(12, 62, 142, 22, block_color);
+  gfx->drawRect(12, 62, 142, 22, COLOR_WHITE);
+  text(44, 69, "BLOCOS", COLOR_WHITE, 1);
 
-  gfx->fillRect(166, 102, 142, 28, dot_color);
-  gfx->drawRect(166, 102, 142, 28, COLOR_WHITE);
-  text(186, 112, "PONTOS", COLOR_WHITE, 2);
+  gfx->fillRect(166, 62, 142, 22, dot_color);
+  gfx->drawRect(166, 62, 142, 22, COLOR_WHITE);
+  text(210, 69, "PONTOS", COLOR_WHITE, 1);
 
+  text(12, 94, "MIN", COLOR_BLUE, 1);
+  gfx->fillRect(52, 90, 36, 24, 0x39E7);
+  gfx->drawRect(52, 90, 36, 24, COLOR_WHITE);
+  text(66, 98, "-", COLOR_WHITE, 1);
+  snprintf(limit_text, sizeof(limit_text), "%.1f", temperature_min_c);
+  text(96, 98, limit_text, COLOR_WHITE, 1);
+  gfx->fillRect(132, 90, 36, 24, COLOR_PURPLE);
+  gfx->drawRect(132, 90, 36, 24, COLOR_WHITE);
+  text(146, 98, "+", COLOR_WHITE, 1);
+
+  text(180, 94, "MAX", COLOR_RED, 1);
+  gfx->fillRect(220, 90, 36, 24, 0x39E7);
+  gfx->drawRect(220, 90, 36, 24, COLOR_WHITE);
+  text(234, 98, "-", COLOR_WHITE, 1);
+  snprintf(limit_text, sizeof(limit_text), "%.1f", temperature_max_c);
+  text(258, 98, limit_text, COLOR_WHITE, 1);
+  gfx->fillRect(284, 90, 24, 24, COLOR_PURPLE);
+  gfx->drawRect(284, 90, 24, 24, COLOR_WHITE);
+  text(293, 98, "+", COLOR_WHITE, 1);
+
+  text(12, 122, "toque +/- ajusta 0.5 C", COLOR_DIM, 1);
   text(12, 140, "barra inferior sai", COLOR_DIM, 1);
   menu_bar();
 }
@@ -2019,16 +2353,24 @@ void handle_touch() {
   }
 
   if (view_mode == ViewMode::kConfig) {
-    if (y >= 130) {
+    if (y >= 146) {
       view_mode = ViewMode::kStatus;
-    } else if (y >= 50 && y < 82 && x < 160) {
+    } else if (y >= 34 && y < 60 && x < 160) {
       save_sensor_mode(SensorMode::kSht30);
-    } else if (y >= 50 && y < 82) {
+    } else if (y >= 34 && y < 60) {
       save_sensor_mode(SensorMode::kDs18b20);
-    } else if (y >= 98 && y < 134 && x < 160) {
+    } else if (y >= 62 && y < 88 && x < 160) {
       save_graph_style(GraphStyle::kBlocks);
-    } else {
+    } else if (y >= 62 && y < 88) {
       save_graph_style(GraphStyle::kDots);
+    } else if (y >= 90 && y < 118 && x >= 52 && x < 88) {
+      adjust_temperature_limit(true, -LIMIT_STEP_C);
+    } else if (y >= 90 && y < 118 && x >= 132 && x < 168) {
+      adjust_temperature_limit(true, LIMIT_STEP_C);
+    } else if (y >= 90 && y < 118 && x >= 220 && x < 256) {
+      adjust_temperature_limit(false, -LIMIT_STEP_C);
+    } else if (y >= 90 && y < 118 && x >= 284 && x < 310) {
+      adjust_temperature_limit(false, LIMIT_STEP_C);
     }
     ui_dirty = true;
     return;
@@ -2136,6 +2478,7 @@ void loop() {
     server.handleClient();
     update_wifi_status();
     check_pending_ota_health();
+    maybe_check_remote_ota();
     feed_watchdog();
     delay(20);
     return;
@@ -2216,6 +2559,7 @@ void loop() {
     server.handleClient();
     update_wifi_status();
     check_pending_ota_health();
+    maybe_check_remote_ota();
     handle_touch();
     feed_watchdog();
     delay(10);
