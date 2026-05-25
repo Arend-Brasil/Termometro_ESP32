@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.25.4",
+  "version": "2026.05.25.5",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "dfae72b95b608669311b3ce60066a62ce4b01ad0350e13ff0e3b4d30773fc7ca",
-  "notes": "Ajusta texto da escala na tela Graf"
+  "sha256": "2f4fe0f32906f43f5e850fd925157e43465baa70ac61dd9328429e6a36ba316a",
+  "notes": "Envia diagnostico remoto de firmware, historico, limites e uptime"
 }

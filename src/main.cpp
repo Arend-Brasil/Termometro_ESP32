@@ -61,7 +61,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.25.4";
+constexpr const char *FIRMWARE_VERSION = "2026.05.25.5";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -751,7 +751,15 @@ void handle_version() {
   data += running_partition_label();
   data += F("\",\"remote_ota\":\"");
   data += last_remote_ota_status;
-  data += F("\"}");
+  data += F("\",\"history_count\":");
+  data += String(temp_history_count);
+  data += F(",\"limit_min\":");
+  data += String(temperature_min_c, 1);
+  data += F(",\"limit_max\":");
+  data += String(temperature_max_c, 1);
+  data += F(",\"uptime_s\":");
+  data += String(millis() / 1000UL);
+  data += F("}");
   server.send(200, "application/json", data);
 }
 
@@ -1397,6 +1405,16 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += F("&idade_s=");
   uint32_t age_s = (millis() - sample.measured_ms) / 1000UL;
   url += String(age_s);
+  url += F("&firmware_version=");
+  url += url_encode(FIRMWARE_VERSION);
+  url += F("&history_count=");
+  url += String(temp_history_count);
+  url += F("&limit_min=");
+  url += String(temperature_min_c, 1);
+  url += F("&limit_max=");
+  url += String(temperature_max_c, 1);
+  url += F("&uptime_s=");
+  url += String(millis() / 1000UL);
 
   if (!http.begin(client, url)) {
     Serial.println("Cloud: falha ao iniciar HTTPS");

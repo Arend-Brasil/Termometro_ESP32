@@ -31,7 +31,12 @@ function appendData(data) {
     data.umidade || "",
     data.tensao || "",
     data.rssi || "",
-    ok ? "SIM" : "NAO"
+    ok ? "SIM" : "NAO",
+    data.firmware_version || "",
+    data.history_count || "",
+    data.limit_min || "",
+    data.limit_max || "",
+    data.uptime_s || ""
   ]);
 
   var sampleAgeSeconds = parseNumber(data.idade_s);
@@ -272,7 +277,12 @@ function readData(params) {
       umidade: umidade,
       tensao: tensao,
       rssi: rssi,
-      token_ok: String(row[6] || "")
+      token_ok: String(row[6] || ""),
+      firmware_version: String(row[7] || ""),
+      history_count: parseNumber(row[8]),
+      limit_min: parseNumber(row[9]),
+      limit_max: parseNumber(row[10]),
+      uptime_s: parseNumber(row[11])
     });
   }
 
@@ -314,7 +324,7 @@ function dashboardHtml() {
   html += "<div class='sub'><span class='min'>MIN</span> <span id='hmin'>--.-%</span> &nbsp; <span class='max'>MAX</span> <span id='hmax'>--.-%</span></div></section>";
   html += "</div><div class='chartTitle'>Temperatura</div><canvas id='tempChart' width='900' height='230'></canvas>";
   html += "<div class='chartTitle'>Umidade</div><canvas id='humChart' width='900' height='230'></canvas>";
-  html += "<div id='periodInfo' class='rangeInfo'></div><div id='tip' class='tip'></div>";
+  html += "<div id='periodInfo' class='rangeInfo'></div><div id='diagInfo' class='rangeInfo'></div><div id='tip' class='tip'></div>";
   html += "</div><script>";
   html += "var WEB_APP_URL='" + webAppUrl + "';";
   html += "var currentDevice='';";
@@ -333,7 +343,8 @@ function dashboardHtml() {
   html += "function chartCursor(ev,id){if(ev.cancelable)ev.preventDefault();var c=document.getElementById(id),s=CHARTS[id];if(!s||!s.series||!s.series.length)return;var rect=c.getBoundingClientRect();var t=ev.touches?ev.touches[0]:ev;var ratio=(t.clientX-rect.left)/rect.width;var idx=Math.round(ratio*(s.series.length-1));idx=Math.max(0,Math.min(s.series.length-1,idx));draw(id,s.series,s.color,0,s.label,s.suffix);markPoint(id,idx);showTip(t.clientX,t.clientY,s,s.series[idx]);}";
   html += "function hideTip(){document.getElementById('tip').style.display='none';Object.keys(CHARTS).forEach(function(id){var s=CHARTS[id];if(s){s.selected=null;draw(id,s.series,s.color,0,s.label,s.suffix);}});}";
   html += "function updateDeviceSelect(rows){var devices=[];rows.forEach(function(r){if(r.device_id&&devices.indexOf(r.device_id)<0)devices.push(r.device_id);});var sel=document.getElementById('device');var previous=currentDevice||sel.value;sel.innerHTML='<option value=\"\">Todos</option>'+devices.map(function(d){return '<option>'+d+'</option>';}).join('');sel.value=devices.indexOf(previous)>=0?previous:'';currentDevice=sel.value;sel.onchange=function(){currentDevice=sel.value;loadData();};}";
-  html += "function loadData(){var period=document.getElementById('period').value;var url=WEB_APP_URL+'?api=data&period='+encodeURIComponent(period)+'&max_points=1200'+(currentDevice?'&device_id='+encodeURIComponent(currentDevice):'');fetch(url).then(function(res){return res.json();}).then(function(data){var rows=validRows(data.rows||[]);updateDeviceSelect(rows);var filtered=currentDevice?rows.filter(function(r){return r.device_id===currentDevice;}):rows;var tempSeries=validSeries(filtered,'temperatura',-40,85);var humSeries=validSeries(filtered,'umidade',0,100);var temps=tempSeries.map(function(p){return p.value;});var hums=humSeries.map(function(p){return p.value;});var statTemps=currentStatsSeries(tempSeries).map(function(p){return p.value;});var statHums=currentStatsSeries(humSeries).map(function(p){return p.value;});var last=filtered[filtered.length-1];document.getElementById('temp').textContent=fmt(temps[temps.length-1],' C',1);document.getElementById('hum').textContent=fmt(hums[hums.length-1],'%',1);document.getElementById('tmin').textContent=statTemps.length?fmt(Math.min.apply(null,statTemps),' C',1):'--.- C';document.getElementById('tmax').textContent=statTemps.length?fmt(Math.max.apply(null,statTemps),' C',1):'--.- C';document.getElementById('hmin').textContent=statHums.length?fmt(Math.min.apply(null,statHums),'%',1):'--.-%';document.getElementById('hmax').textContent=statHums.length?fmt(Math.max.apply(null,statHums),'%',1):'--.-%';document.getElementById('stamp').textContent=last?(last.timestamp_text||new Date(last.timestamp).toLocaleString()):'Sem dados';document.getElementById('periodInfo').textContent=filtered.length?(document.getElementById('period').selectedOptions[0].text+' | '+filtered.length+' pontos | '+filtered[0].timestamp_text+' ate '+filtered[filtered.length-1].timestamp_text+' | min/max desde '+(new Date().getHours()<12?'00:00':'12:00')):'Sem dados neste periodo';draw('tempChart',tempSeries,'#ff9d00',4,'Temperatura',' C');draw('humChart',humSeries,'#a45bff',10,'Umidade','%');}).catch(function(err){document.getElementById('stamp').textContent='Erro ao carregar dados: '+err;});}";
+  html += "function diagText(last){if(!last)return'';var parts=[];if(last.firmware_version)parts.push('firmware '+last.firmware_version);if(Number.isFinite(last.history_count))parts.push('historico local '+last.history_count+' pontos');if(Number.isFinite(last.limit_min)&&Number.isFinite(last.limit_max))parts.push('limites '+last.limit_min.toFixed(1)+' a '+last.limit_max.toFixed(1)+' C');if(Number.isFinite(last.uptime_s))parts.push('ligado ha '+Math.floor(last.uptime_s/60)+' min');return parts.join(' | ');}";
+  html += "function loadData(){var period=document.getElementById('period').value;var url=WEB_APP_URL+'?api=data&period='+encodeURIComponent(period)+'&max_points=1200'+(currentDevice?'&device_id='+encodeURIComponent(currentDevice):'');fetch(url).then(function(res){return res.json();}).then(function(data){var rows=validRows(data.rows||[]);updateDeviceSelect(rows);var filtered=currentDevice?rows.filter(function(r){return r.device_id===currentDevice;}):rows;var tempSeries=validSeries(filtered,'temperatura',-40,85);var humSeries=validSeries(filtered,'umidade',0,100);var temps=tempSeries.map(function(p){return p.value;});var hums=humSeries.map(function(p){return p.value;});var statTemps=currentStatsSeries(tempSeries).map(function(p){return p.value;});var statHums=currentStatsSeries(humSeries).map(function(p){return p.value;});var last=filtered[filtered.length-1];document.getElementById('temp').textContent=fmt(temps[temps.length-1],' C',1);document.getElementById('hum').textContent=fmt(hums[hums.length-1],'%',1);document.getElementById('tmin').textContent=statTemps.length?fmt(Math.min.apply(null,statTemps),' C',1):'--.- C';document.getElementById('tmax').textContent=statTemps.length?fmt(Math.max.apply(null,statTemps),' C',1):'--.- C';document.getElementById('hmin').textContent=statHums.length?fmt(Math.min.apply(null,statHums),'%',1):'--.-%';document.getElementById('hmax').textContent=statHums.length?fmt(Math.max.apply(null,statHums),'%',1):'--.-%';document.getElementById('stamp').textContent=last?(last.timestamp_text||new Date(last.timestamp).toLocaleString()):'Sem dados';document.getElementById('diagInfo').textContent=diagText(last);document.getElementById('periodInfo').textContent=filtered.length?(document.getElementById('period').selectedOptions[0].text+' | '+filtered.length+' pontos | '+filtered[0].timestamp_text+' ate '+filtered[filtered.length-1].timestamp_text+' | min/max desde '+(new Date().getHours()<12?'00:00':'12:00')):'Sem dados neste periodo';draw('tempChart',tempSeries,'#ff9d00',4,'Temperatura',' C');draw('humChart',humSeries,'#a45bff',10,'Umidade','%');}).catch(function(err){document.getElementById('stamp').textContent='Erro ao carregar dados: '+err;});}";
   html += "document.getElementById('period').onchange=loadData;['tempChart','humChart'].forEach(function(id){var c=document.getElementById(id);c.addEventListener('mousemove',function(e){chartCursor(e,id);});c.addEventListener('click',function(e){chartCursor(e,id);});c.addEventListener('touchstart',function(e){chartCursor(e,id);},{passive:false});c.addEventListener('touchmove',function(e){chartCursor(e,id);},{passive:false});c.addEventListener('mouseleave',hideTip);});loadData();setInterval(loadData,60000);";
   html += "</script></body></html>";
   return html;
