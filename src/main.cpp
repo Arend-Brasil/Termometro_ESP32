@@ -61,7 +61,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.25.3";
+constexpr const char *FIRMWARE_VERSION = "2026.05.25.4";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -165,6 +165,8 @@ String ota_password();
 bool ota_authenticated();
 bool require_ota_auth();
 void check_pending_ota_health();
+void handle_version();
+String running_partition_label();
 bool sensor_has_humidity();
 void load_sensor_mode();
 void save_sensor_mode(SensorMode mode);
@@ -732,6 +734,24 @@ void handle_data() {
     data += (!sensor_has_humidity() || isnan(value)) ? String("null") : String(value, 2);
   }
   data += F("]}");
+  server.send(200, "application/json", data);
+}
+
+void handle_version() {
+  update_wifi_status();
+  String data;
+  data.reserve(260);
+  data += F("{\"version\":\"");
+  data += FIRMWARE_VERSION;
+  data += F("\",\"device_id\":\"");
+  data += device_id;
+  data += F("\",\"ip\":\"");
+  data += sta_ip;
+  data += F("\",\"running_partition\":\"");
+  data += running_partition_label();
+  data += F("\",\"remote_ota\":\"");
+  data += last_remote_ota_status;
+  data += F("\"}");
   server.send(200, "application/json", data);
 }
 
@@ -1642,6 +1662,7 @@ void init_wifi() {
 
   server.on("/", HTTP_GET, handle_root);
   server.on("/data", HTTP_GET, handle_data);
+  server.on("/version", HTTP_GET, handle_version);
   server.on("/wifi", HTTP_GET, handle_wifi_page);
   server.on("/save", HTTP_POST, handle_save_wifi);
   server.on("/ota", HTTP_GET, handle_ota_page);
@@ -1942,12 +1963,13 @@ void draw_block_graph(int plot_x, int plot_y, int plot_w, int plot_h) {
   }
 }
 
-void draw_graph(int x, int y, int w, int h, esp_err_t result) {
+void draw_graph(int x, int y, int w, int h, esp_err_t result,
+                bool show_scale = true) {
   gfx->drawRect(x, y, w, h, result == ESP_OK ? COLOR_CYAN : COLOR_RED);
   bool compact = h < 48;
-  if (!compact) {
+  if (!compact && show_scale) {
     char title[28];
-    snprintf(title, sizeof(title), "HIST REF %.1f-%.1fC", temperature_min_c,
+    snprintf(title, sizeof(title), "%.1f a %.1f \xC2\xB0""C", temperature_min_c,
              temperature_max_c);
     text(x + 6, y + 6, title, COLOR_YELLOW, 1);
   }
@@ -2104,10 +2126,10 @@ void draw_graph_view(float temp_c, esp_err_t result) {
   }
   text(12, 34, temp_text, result == ESP_OK ? COLOR_PURPLE : COLOR_RED, 2);
   char ref_text[24];
-  snprintf(ref_text, sizeof(ref_text), "REF %.1f-%.1f C", temperature_min_c,
+  snprintf(ref_text, sizeof(ref_text), "%.1f a %.1f \xC2\xB0""C", temperature_min_c,
            temperature_max_c);
   text(146, 40, ref_text, COLOR_YELLOW, 1);
-  draw_graph(10, 58, 300, 86, result);
+  draw_graph(10, 58, 300, 86, result, false);
   menu_bar();
 }
 
@@ -2223,6 +2245,7 @@ void draw_recovery_screen() {
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_YELLOW);
   text(18, 18, "RECUPERACAO", COLOR_YELLOW, 2);
+  text(210, 18, FIRMWARE_VERSION, COLOR_DIM, 1);
   text(18, 48, "Wi-Fi:", COLOR_WHITE, 1);
   text(78, 48, ap_ssid.c_str(), COLOR_CYAN, 1);
   text(18, 66, "Senha:", COLOR_WHITE, 1);
