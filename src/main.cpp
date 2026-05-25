@@ -61,7 +61,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.25.2";
+constexpr const char *FIRMWARE_VERSION = "2026.05.25.3";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -568,7 +568,9 @@ void handle_root() {
   page += F("</title><style>body{font-family:Arial,sans-serif;margin:0;background:#101418;color:#f6f7f9}.wrap{max-width:760px;margin:0 auto;padding:20px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.muted{color:#9aa7b2}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{border:1px solid #303a44;background:#182028;padding:16px;text-align:center}.label{color:#f4c542;font-size:13px}.value{font-size:44px;font-weight:700;color:#a45bff;margin-top:8px}.sub{margin-top:10px;color:#cdd6df}.min{color:#4a90ff}.max{color:#ff3333}.chartTitle{margin:18px 0 8px;color:#cdd6df;font-size:14px}canvas{width:100%;height:220px;background:#12181e;border:1px solid #303a44}a{color:#7fd7ff;text-decoration:none}@media(max-width:560px){.grid{grid-template-columns:1fr}.value{font-size:38px}}</style></head><body><div class='wrap'>");
   page += F("<header><div><h2>Barracão</h2><div class='muted'>");
   page += device_id;
-  page += F("</div></div><div><a href='/wifi'>Wi-Fi</a> &nbsp; <a href='/ota'>OTA</a></div></header>");
+  page += F(" &nbsp; v");
+  page += FIRMWARE_VERSION;
+  page += F("</div></div><div><a href='/wifi'>Wi-Fi</a> &nbsp; <a href='/config'>Config</a> &nbsp; <a href='/ota'>OTA</a></div></header>");
   page += F("<div class='grid'><section class='card'><div class='label'>TEMPERATURA</div><div id='temp' class='value'>");
   page += temp_text;
   page += F("</div><div class='sub'><span class='min'>MIN</span> <span id='tmin'>");
@@ -2021,6 +2023,7 @@ void draw_dashboard(float temp_c, esp_err_t result) {
   draw_barracao_title();
   text(252, 16, sensor_error ? "ERR" : "OK",
        sensor_error ? COLOR_RED : COLOR_CYAN, 1);
+  text(226, 28, "v2026.05.25.3", COLOR_DIM, 1);
   gfx->drawFastVLine(160, 42, 46, COLOR_DIM);
   gfx->drawFastHLine(10, 92, 300, COLOR_DIM);
 
@@ -2091,6 +2094,7 @@ void draw_graph_view(float temp_c, esp_err_t result) {
                 sensor_error ? COLOR_RED : COLOR_CYAN);
   text(12, 12, "GRAFICO LOCAL", COLOR_WHITE, 2);
   text(224, 16, device_id.c_str(), COLOR_YELLOW, 1);
+  text(232, 28, FIRMWARE_VERSION, COLOR_DIM, 1);
 
   char temp_text[18];
   if (result == ESP_OK) {
