@@ -61,7 +61,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.25.5";
+constexpr const char *FIRMWARE_VERSION = "2026.05.26.6";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -2063,7 +2063,9 @@ void draw_dashboard(float temp_c, esp_err_t result) {
   draw_barracao_title();
   text(252, 16, sensor_error ? "ERR" : "OK",
        sensor_error ? COLOR_RED : COLOR_CYAN, 1);
-  text(226, 28, "v2026.05.25.3", COLOR_DIM, 1);
+  char version_text[22];
+  snprintf(version_text, sizeof(version_text), "v%s", FIRMWARE_VERSION);
+  text(216, 28, version_text, COLOR_DIM, 1);
   gfx->drawFastVLine(160, 42, 46, COLOR_DIM);
   gfx->drawFastHLine(10, 92, 300, COLOR_DIM);
 
@@ -2134,7 +2136,6 @@ void draw_graph_view(float temp_c, esp_err_t result) {
                 sensor_error ? COLOR_RED : COLOR_CYAN);
   text(12, 12, "GRAFICO LOCAL", COLOR_WHITE, 2);
   text(224, 16, device_id.c_str(), COLOR_YELLOW, 1);
-  text(232, 28, FIRMWARE_VERSION, COLOR_DIM, 1);
 
   char temp_text[18];
   if (result == ESP_OK) {
@@ -2263,7 +2264,6 @@ void draw_recovery_screen() {
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_YELLOW);
   text(18, 18, "RECUPERACAO", COLOR_YELLOW, 2);
-  text(210, 18, FIRMWARE_VERSION, COLOR_DIM, 1);
   text(18, 48, "Wi-Fi:", COLOR_WHITE, 1);
   text(78, 48, ap_ssid.c_str(), COLOR_CYAN, 1);
   text(18, 66, "Senha:", COLOR_WHITE, 1);
