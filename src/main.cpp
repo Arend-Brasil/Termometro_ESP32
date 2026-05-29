@@ -62,7 +62,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.1";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.2";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -110,6 +110,10 @@ uint32_t ota_boot_ms = 0;
 bool remote_ota_running = false;
 uint32_t last_remote_ota_check_ms = 0;
 String last_remote_ota_status = "nao verificado";
+String reset_reason_text = "desconhecido";
+uint32_t boot_count = 0;
+int last_cloud_http_code = 0;
+String last_cloud_status = "boot";
 
 float temp_history[HISTORY_CAPACITY] = {};
 float humidity_history[HISTORY_CAPACITY] = {};
@@ -185,6 +189,8 @@ void handle_restart();
 void maybe_check_remote_ota();
 void init_watchdog();
 void feed_watchdog();
+void init_diagnostics();
+void note_cloud_status(int http_code, const String &status);
 
 void lcd_reg_init() {
   static const uint8_t init_operations[] = {
@@ -499,6 +505,60 @@ void feed_watchdog() {
   esp_task_wdt_reset();
 }
 
+const char *reset_reason_name(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON:
+      return "POWERON";
+    case ESP_RST_EXT:
+      return "EXTERNAL";
+    case ESP_RST_SW:
+      return "SOFTWARE";
+    case ESP_RST_PANIC:
+      return "PANIC";
+    case ESP_RST_INT_WDT:
+      return "INT_WDT";
+    case ESP_RST_TASK_WDT:
+      return "TASK_WDT";
+    case ESP_RST_WDT:
+      return "WDT";
+    case ESP_RST_DEEPSLEEP:
+      return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT:
+      return "BROWNOUT";
+    case ESP_RST_SDIO:
+      return "SDIO";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+void init_diagnostics() {
+  reset_reason_text = reset_reason_name(esp_reset_reason());
+  prefs.begin("diag", false);
+  boot_count = prefs.getUInt("boots", 0) + 1;
+  prefs.putUInt("boots", boot_count);
+  last_cloud_http_code = prefs.getInt("cloud_code", 0);
+  last_cloud_status = prefs.getString("cloud_status", "boot");
+  prefs.end();
+  Serial.printf("Diag: reset=%s boot=%lu ultimo_cloud=%d %s\n",
+                reset_reason_text.c_str(), static_cast<unsigned long>(boot_count),
+                last_cloud_http_code, last_cloud_status.c_str());
+}
+
+String json_escape(const String &value) {
+  String escaped;
+  escaped.reserve(value.length() + 8);
+  for (size_t i = 0; i < value.length(); ++i) {
+    char c = value[i];
+    if (c == '\\') escaped += F("\\\\");
+    else if (c == '"') escaped += F("\\\"");
+    else if (c == '\n') escaped += F("\\n");
+    else if (c == '\r') escaped += F("\\r");
+    else escaped += c;
+  }
+  return escaped;
+}
+
 String html_escape(const String &value) {
   String escaped;
   escaped.reserve(value.length());
@@ -725,7 +785,17 @@ void handle_data() {
   data += humidity_max_text;
   data += F("\",\"status\":\"");
   data += last_alarm ? F("ALARME") : F("OK");
-  data += F("\",\"sample_seconds\":60,\"temp_history\":[");
+  data += F("\",\"reset_reason\":\"");
+  data += json_escape(reset_reason_text);
+  data += F("\",\"boot_count\":");
+  data += String(boot_count);
+  data += F(",\"cloud_http\":");
+  data += String(last_cloud_http_code);
+  data += F(",\"cloud_status\":\"");
+  data += json_escape(last_cloud_status);
+  data += F("\",\"cloud_queue\":");
+  data += String(cloud_queue_count);
+  data += F(",\"sample_seconds\":60,\"temp_history\":[");
   for (size_t i = 0; i < temp_history_count; ++i) {
     if (i > 0) data += ',';
     float value = history_value(i);
@@ -763,6 +833,16 @@ void handle_version() {
   data += String(temperature_max_c, 1);
   data += F(",\"uptime_s\":");
   data += String(millis() / 1000UL);
+  data += F(",\"reset_reason\":\"");
+  data += json_escape(reset_reason_text);
+  data += F("\",\"boot_count\":");
+  data += String(boot_count);
+  data += F(",\"cloud_http\":");
+  data += String(last_cloud_http_code);
+  data += F(",\"cloud_status\":\"");
+  data += json_escape(last_cloud_status);
+  data += F("\",\"cloud_queue\":");
+  data += String(cloud_queue_count);
   data += F("}");
   server.send(200, "application/json", data);
 }
@@ -1399,6 +1479,7 @@ void maybe_check_remote_ota() {
 
 bool cloud_send_sample(const CloudSample &sample) {
   if (WiFi.status() != WL_CONNECTED) {
+    note_cloud_status(0, "sem Wi-Fi");
     return false;
   }
 
@@ -1411,7 +1492,7 @@ bool cloud_send_sample(const CloudSample &sample) {
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
   String url;
-  url.reserve(320);
+  url.reserve(560);
   url += CLOUD_URL;
   url += F("?token=");
   url += url_encode(CLOUD_TOKEN);
@@ -1443,9 +1524,22 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += String(temperature_max_c, 1);
   url += F("&uptime_s=");
   url += String(sample.measured_ms / 1000UL);
+  url += F("&reset_reason=");
+  url += url_encode(reset_reason_text);
+  url += F("&boot_count=");
+  url += String(boot_count);
+  url += F("&cloud_status=");
+  url += url_encode(last_cloud_status);
+  url += F("&cloud_http=");
+  url += String(last_cloud_http_code);
+  url += F("&queue_count=");
+  url += String(cloud_queue_count);
+  url += F("&wifi_status=");
+  url += url_encode(sta_connected ? sta_ip : String("SEM REDE"));
 
   if (!http.begin(client, url)) {
     Serial.println("Cloud: falha ao iniciar HTTPS");
+    note_cloud_status(0, "falha begin HTTPS");
     return false;
   }
 
@@ -1457,7 +1551,25 @@ bool cloud_send_sample(const CloudSample &sample) {
   }
 
   Serial.printf("Cloud: HTTP %d resposta: %s\n", code, body.c_str());
-  return code == 200 && body.indexOf("\"ok\":true") >= 0;
+  bool ok = code == 200 && body.indexOf("\"ok\":true") >= 0;
+  note_cloud_status(code, ok ? String("ok") : String("falha: ") + body);
+  return ok;
+}
+
+void note_cloud_status(int http_code, const String &status) {
+  String short_status = status;
+  if (short_status.length() > 80) {
+    short_status = short_status.substring(0, 80);
+  }
+  if (last_cloud_http_code == http_code && last_cloud_status == short_status) {
+    return;
+  }
+  last_cloud_http_code = http_code;
+  last_cloud_status = short_status;
+  prefs.begin("diag", false);
+  prefs.putInt("cloud_code", last_cloud_http_code);
+  prefs.putString("cloud_status", last_cloud_status);
+  prefs.end();
 }
 
 void enqueue_cloud_sample(const CloudSample &sample) {
@@ -1494,6 +1606,7 @@ void send_cloud_measurement(float temp_c, float humidity_pct) {
                         uint32_t(temp_history_count)};
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Cloud: sem Wi-Fi, guardando leitura");
+    note_cloud_status(0, "sem Wi-Fi");
     enqueue_cloud_sample(sample);
     return;
   }
@@ -2514,6 +2627,7 @@ void setup() {
   delay(300);
   Serial.println("Termometro ESP32-C6 Touch LCD 1.47");
   cloud_boot_id = esp_random();
+  init_diagnostics();
   init_watchdog();
 
   init_display();
