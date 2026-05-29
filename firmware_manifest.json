@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.26.6",
+  "version": "2026.05.29.1",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "a54de50a5df585d0acbf3b09e0ae1461cd0068ccf67dd5cc5eac6ec01a6975e2",
+  "sha256": "796d2e9c73611ff2bf61a1e7381968364cb676cd457a7e5e96f54bbb9c1c4ece",
   "notes": "Padroniza versao visivel somente na tela principal"
 }

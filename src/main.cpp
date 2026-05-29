@@ -13,6 +13,7 @@
 #include "esp_err.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
+#include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "mbedtls/sha256.h"
 
@@ -43,7 +44,7 @@ constexpr uint32_t STATS_RESET_MS = 12UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t HISTORY_SAMPLE_MS = 60UL * 1000UL;
 constexpr uint32_t CLOUD_SEND_MS = 60UL * 1000UL;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 3500;
-constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 1500;
+constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 8000;
 constexpr uint32_t INTRO_TIMEOUT_MS = 5000;
 constexpr uint32_t OTA_CONFIRM_MS = 30UL * 1000UL;
 constexpr uint32_t OTA_ROLLBACK_MS = 5UL * 60UL * 1000UL;
@@ -61,7 +62,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.26.6";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.1";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -94,6 +95,7 @@ String device_id;
 String ap_ssid;
 String sta_ssid;
 String sta_ip = "SEM REDE";
+uint32_t cloud_boot_id = 0;
 String i2c_devices = "nao escaneado";
 bool sta_connected = false;
 bool ap_enabled = false;
@@ -119,6 +121,7 @@ struct CloudSample {
   float humidity_pct;
   int32_t rssi;
   uint32_t measured_ms;
+  uint32_t history_count;
 };
 
 CloudSample cloud_queue[CLOUD_QUEUE_CAPACITY] = {};
@@ -178,6 +181,7 @@ void save_temperature_limits(float min_c, float max_c);
 void adjust_temperature_limit(bool adjust_min, float delta_c);
 bool check_remote_ota(bool manual);
 void handle_remote_ota();
+void handle_restart();
 void maybe_check_remote_ota();
 void init_watchdog();
 void feed_watchdog();
@@ -1079,7 +1083,7 @@ void handle_config_page() {
   }
 
   String page;
-  page.reserve(3400);
+  page.reserve(3900);
   page += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
   page += F("<title>Config avancada</title><style>body{font-family:Arial,sans-serif;margin:20px;max-width:620px;background:#101418;color:#f6f7f9}.card{border:1px solid #33404a;padding:14px;margin:12px 0;background:#182028}label{display:block;margin:12px 0;padding:10px;border:1px solid #33404a}input[type=number]{box-sizing:border-box;width:100%;padding:10px;font-size:16px;background:#f6f7f9;color:#101418}button{margin-top:12px;padding:12px 16px;font-size:16px}code{background:#26313a;padding:2px 5px}a{color:#7fd7ff}.warn{color:#f4c542}</style></head><body>");
   page += F("<h2>Configuracao avancada</h2><p><a href='/ota'>Voltar ao OTA</a> &nbsp; <a href='/'>Painel</a></p>");
@@ -1087,7 +1091,8 @@ void handle_config_page() {
   page += FIRMWARE_VERSION;
   page += F("</code><br>OTA remoto: <code>");
   page += last_remote_ota_status;
-  page += F("</code></p><form method='post' action='/remote-ota'><button type='submit'>Verificar atualizacao remota</button></form></div>");
+  page += F("</code></p><form method='post' action='/remote-ota'><button type='submit'>Verificar atualizacao remota</button></form>");
+  page += F("<form method='post' action='/restart' onsubmit=\"return confirm('Reiniciar o termometro agora?')\"><button type='submit'>Reiniciar agora</button></form></div>");
   page += F("<div class='card'><p>Sensor atual: <code>");
   page += sensor_mode_label();
   page += F("</code></p><form method='post' action='/config'>");
@@ -1136,6 +1141,24 @@ void handle_save_config() {
   }
   server.sendHeader("Location", "/config", true);
   server.send(303, "text/plain", "");
+}
+
+void handle_restart() {
+  if (!require_ota_auth()) {
+    return;
+  }
+
+  String page;
+  page.reserve(700);
+  page += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
+  page += F("<meta http-equiv='refresh' content='8;url=/'>");
+  page += F("<title>Reiniciando</title><style>body{font-family:Arial,sans-serif;margin:20px;background:#101418;color:#f6f7f9}a{color:#7fd7ff}code{background:#26313a;padding:2px 5px}</style></head><body>");
+  page += F("<h2>Reiniciando termometro</h2><p>Dispositivo <code>");
+  page += device_id;
+  page += F("</code> recebeu o comando de reinicio.</p><p>A pagina tentara voltar ao painel em alguns segundos.</p></body></html>");
+  server.send(200, "text/html", page);
+  delay(500);
+  ESP.restart();
 }
 
 void handle_remote_ota() {
@@ -1388,7 +1411,7 @@ bool cloud_send_sample(const CloudSample &sample) {
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
   String url;
-  url.reserve(260);
+  url.reserve(320);
   url += CLOUD_URL;
   url += F("?token=");
   url += url_encode(CLOUD_TOKEN);
@@ -1405,16 +1428,21 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += F("&idade_s=");
   uint32_t age_s = (millis() - sample.measured_ms) / 1000UL;
   url += String(age_s);
+  url += F("&sample_id=");
+  char sample_id[24];
+  snprintf(sample_id, sizeof(sample_id), "%08X-%08X", cloud_boot_id,
+           sample.measured_ms);
+  url += sample_id;
   url += F("&firmware_version=");
   url += url_encode(FIRMWARE_VERSION);
   url += F("&history_count=");
-  url += String(temp_history_count);
+  url += String(sample.history_count);
   url += F("&limit_min=");
   url += String(temperature_min_c, 1);
   url += F("&limit_max=");
   url += String(temperature_max_c, 1);
   url += F("&uptime_s=");
-  url += String(millis() / 1000UL);
+  url += String(sample.measured_ms / 1000UL);
 
   if (!http.begin(client, url)) {
     Serial.println("Cloud: falha ao iniciar HTTPS");
@@ -1462,7 +1490,8 @@ bool flush_one_cloud_sample() {
 }
 
 void send_cloud_measurement(float temp_c, float humidity_pct) {
-  CloudSample sample = {temp_c, humidity_pct, WiFi.RSSI(), millis()};
+  CloudSample sample = {temp_c, humidity_pct, WiFi.RSSI(), millis(),
+                        uint32_t(temp_history_count)};
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Cloud: sem Wi-Fi, guardando leitura");
     enqueue_cloud_sample(sample);
@@ -1688,6 +1717,7 @@ void init_wifi() {
   server.on("/config", HTTP_GET, handle_config_page);
   server.on("/config", HTTP_POST, handle_save_config);
   server.on("/remote-ota", HTTP_POST, handle_remote_ota);
+  server.on("/restart", HTTP_POST, handle_restart);
   server.begin();
 
   connect_known_networks();
@@ -2483,6 +2513,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("Termometro ESP32-C6 Touch LCD 1.47");
+  cloud_boot_id = esp_random();
   init_watchdog();
 
   init_display();

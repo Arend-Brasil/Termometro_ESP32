@@ -7,6 +7,36 @@ var ALERT_MIN_C = 2.0;
 var ALERT_MAX_C = 8.0;
 var ALERT_COOLDOWN_MINUTES = 5;
 var ALERT_MAX_SAMPLE_AGE_SECONDS = 5 * 60;
+var DATA_HEADERS = [
+  "data_hora",
+  "device_id",
+  "temperatura",
+  "umidade",
+  "tensao",
+  "rssi",
+  "token_ok",
+  "firmware_version",
+  "history_count",
+  "limit_min",
+  "limit_max",
+  "uptime_s",
+  "sample_id",
+  "idade_s",
+  "received_at"
+];
+
+function ensureSheetHeaders(sheet) {
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(DATA_HEADERS);
+    return;
+  }
+
+  var firstCell = String(sheet.getRange(1, 1).getValue() || "").toLowerCase();
+  if (firstCell !== DATA_HEADERS[0]) {
+    sheet.insertRowBefore(1);
+  }
+  sheet.getRange(1, 1, 1, DATA_HEADERS.length).setValues([DATA_HEADERS]);
+}
 
 function sampleTimestamp(data) {
   var ageSeconds = parseNumber(data.idade_s);
@@ -17,11 +47,30 @@ function sampleTimestamp(data) {
   return new Date(nowMs);
 }
 
+function sampleAlreadyStored(sheet, sampleId) {
+  sampleId = String(sampleId || "").trim();
+  if (!sampleId || sheet.getLastRow() < 2) {
+    return false;
+  }
+  var sampleIdColumn = DATA_HEADERS.indexOf("sample_id") + 1;
+  var finder = sheet.getRange(2, sampleIdColumn, sheet.getLastRow() - 1, 1)
+    .createTextFinder(sampleId)
+    .matchEntireCell(true);
+  return finder.findNext() !== null;
+}
+
 function appendData(data) {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   spreadsheet.setSpreadsheetTimeZone(TIME_ZONE);
   var sheet = spreadsheet.getActiveSheet();
+  ensureSheetHeaders(sheet);
   var ok = data.token === TOKEN;
+  var sampleId = String(data.sample_id || "").trim();
+  if (ok && sampleAlreadyStored(sheet, sampleId)) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: ok, duplicate: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
   var measuredAt = sampleTimestamp(data);
 
   sheet.appendRow([
@@ -36,7 +85,10 @@ function appendData(data) {
     data.history_count || "",
     data.limit_min || "",
     data.limit_max || "",
-    data.uptime_s || ""
+    data.uptime_s || "",
+    sampleId,
+    data.idade_s || "",
+    new Date()
   ]);
 
   var sampleAgeSeconds = parseNumber(data.idade_s);
