@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.29.2",
+  "version": "2026.05.29.10",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "90cae295bba06c94befcce99afd37e90914a64fbd54daa8e8406fd8c94334945",
-  "notes": "Padroniza versao visivel somente na tela principal"
+  "sha256": "18b73ad6413e5df93119f03b378132e904613f1c7196c899731403f3741725f6",
+  "notes": "Ativa OTA remoto automatico controlado para manutencao em campo"
 }

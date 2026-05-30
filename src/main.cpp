@@ -13,6 +13,7 @@
 #include "esp_err.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
+#include "esp_sleep.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "mbedtls/sha256.h"
@@ -31,6 +32,9 @@ constexpr int PIN_TOUCH_SDA = 18;
 constexpr int PIN_TOUCH_SCL = 19;
 constexpr int PIN_TOUCH_RST = 20;
 constexpr int PIN_TOUCH_INT = 21;
+constexpr int PIN_BAT_ADC = 0;
+constexpr int PIN_POWER_SENSE = 8;
+constexpr bool POWER_SENSE_ENABLED = false;
 constexpr uint8_t SHT30_ADDR_A = 0x44;
 constexpr uint8_t SHT30_ADDR_B = 0x45;
 constexpr bool DEFAULT_SHT30_MODE = true;
@@ -43,26 +47,33 @@ constexpr float LIMIT_ABSOLUTE_MAX_C = 80.0f;
 constexpr uint32_t STATS_RESET_MS = 12UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t HISTORY_SAMPLE_MS = 60UL * 1000UL;
 constexpr uint32_t CLOUD_SEND_MS = 60UL * 1000UL;
+constexpr uint64_t BATTERY_SAMPLE_SLEEP_US = 5ULL * 60ULL * 1000ULL * 1000ULL;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 3500;
-constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 8000;
+constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 1500;
 constexpr uint32_t INTRO_TIMEOUT_MS = 5000;
 constexpr uint32_t OTA_CONFIRM_MS = 30UL * 1000UL;
 constexpr uint32_t OTA_ROLLBACK_MS = 5UL * 60UL * 1000UL;
-constexpr uint32_t REMOTE_OTA_CHECK_MS = 6UL * 60UL * 60UL * 1000UL;
+constexpr uint32_t REMOTE_OTA_CHECK_MS = 24UL * 60UL * 60UL * 1000UL;
+constexpr uint32_t REMOTE_OTA_BOOT_DELAY_MS = 15UL * 60UL * 1000UL;
+constexpr uint32_t REMOTE_OTA_BOOT_JITTER_MS = 45UL * 60UL * 1000UL;
+constexpr uint32_t REMOTE_OTA_RETRY_JITTER_MS = 60UL * 60UL * 1000UL;
+constexpr uint16_t REMOTE_OTA_MANIFEST_TIMEOUT_MS = 4000;
 constexpr uint32_t REMOTE_OTA_HTTP_TIMEOUT_MS = 20000;
+constexpr bool REMOTE_OTA_AUTO_CHECK_ENABLED = true;
+constexpr int32_t REMOTE_OTA_MIN_RSSI = -78;
 constexpr uint16_t I2C_TIMEOUT_MS = 50;
 constexpr uint32_t I2C_CLOCK_HZ = 50000;
-constexpr uint32_t WATCHDOG_TIMEOUT_MS = 30UL * 1000UL;
+constexpr uint32_t WATCHDOG_TIMEOUT_MS = 120UL * 1000UL;
 constexpr uint8_t MAX_WIFI_NETWORKS = 5;
 constexpr size_t HISTORY_CAPACITY = 24UL * 60UL;
 constexpr size_t CLOUD_QUEUE_CAPACITY = 24UL * 60UL;
-constexpr uint8_t CLOUD_FLUSH_PER_CYCLE = 10;
+constexpr uint8_t CLOUD_FLUSH_PER_CYCLE = 1;
 constexpr const char *CLOUD_URL =
     "https://script.google.com/macros/s/AKfycbyNDa3mWvWCrRzgCJwfNmlzy40BkUpI0ZcFrS_tEVs6nWOOw4MvDXUIhbbzEUNAfZgP/exec";
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.2";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.10";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -108,12 +119,16 @@ bool ota_update_finished = false;
 bool ota_pending_boot = false;
 uint32_t ota_boot_ms = 0;
 bool remote_ota_running = false;
+bool watchdog_task_added = false;
 uint32_t last_remote_ota_check_ms = 0;
+uint32_t next_remote_ota_check_ms = 0;
 String last_remote_ota_status = "nao verificado";
 String reset_reason_text = "desconhecido";
 uint32_t boot_count = 0;
 int last_cloud_http_code = 0;
 String last_cloud_status = "boot";
+bool external_power_present = true;
+float battery_voltage_v = NAN;
 
 float temp_history[HISTORY_CAPACITY] = {};
 float humidity_history[HISTORY_CAPACITY] = {};
@@ -126,6 +141,12 @@ struct CloudSample {
   int32_t rssi;
   uint32_t measured_ms;
   uint32_t history_count;
+  uint32_t offline_age_s;
+};
+
+struct StoredCloudSample {
+  float temp_c;
+  float humidity_pct;
 };
 
 CloudSample cloud_queue[CLOUD_QUEUE_CAPACITY] = {};
@@ -191,6 +212,15 @@ void init_watchdog();
 void feed_watchdog();
 void init_diagnostics();
 void note_cloud_status(int http_code, const String &status);
+void init_power_monitor();
+void update_power_status();
+float read_battery_voltage();
+bool has_external_power();
+void init_sensor_bus();
+void run_battery_mode();
+void enter_battery_sleep();
+void import_persistent_cloud_queue();
+void enqueue_persistent_cloud_sample(float temp_c, float humidity_pct);
 
 void lcd_reg_init() {
   static const uint8_t init_operations[] = {
@@ -481,6 +511,10 @@ void block(int x, int y, int w, int h, uint16_t color, const char *value,
 }
 
 void init_watchdog() {
+  watchdog_task_added = false;
+  esp_task_wdt_delete(nullptr);
+  esp_task_wdt_deinit();
+
   esp_task_wdt_config_t config = {
       .timeout_ms = WATCHDOG_TIMEOUT_MS,
       .idle_core_mask = (1 << portNUM_PROCESSORS) - 1,
@@ -494,6 +528,7 @@ void init_watchdog() {
 
   err = esp_task_wdt_add(nullptr);
   if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+    watchdog_task_added = true;
     Serial.printf("Watchdog: ativo, timeout %lu s\n",
                   WATCHDOG_TIMEOUT_MS / 1000UL);
   } else {
@@ -502,7 +537,9 @@ void init_watchdog() {
 }
 
 void feed_watchdog() {
-  esp_task_wdt_reset();
+  if (watchdog_task_added) {
+    esp_task_wdt_reset();
+  }
 }
 
 const char *reset_reason_name(esp_reset_reason_t reason) {
@@ -543,6 +580,36 @@ void init_diagnostics() {
   Serial.printf("Diag: reset=%s boot=%lu ultimo_cloud=%d %s\n",
                 reset_reason_text.c_str(), static_cast<unsigned long>(boot_count),
                 last_cloud_http_code, last_cloud_status.c_str());
+}
+
+void init_power_monitor() {
+  pinMode(PIN_BAT_ADC, INPUT);
+  if (POWER_SENSE_ENABLED) {
+    pinMode(PIN_POWER_SENSE, INPUT);
+  }
+  update_power_status();
+}
+
+float read_battery_voltage() {
+  uint32_t sum_mv = 0;
+  constexpr uint8_t samples = 6;
+  for (uint8_t i = 0; i < samples; ++i) {
+    sum_mv += analogReadMilliVolts(PIN_BAT_ADC);
+    delay(2);
+  }
+  return (sum_mv / float(samples)) * 3.0f / 1000.0f;
+}
+
+bool has_external_power() {
+  if (!POWER_SENSE_ENABLED) {
+    return true;
+  }
+  return digitalRead(PIN_POWER_SENSE) == HIGH;
+}
+
+void update_power_status() {
+  battery_voltage_v = read_battery_voltage();
+  external_power_present = has_external_power();
 }
 
 String json_escape(const String &value) {
@@ -795,6 +862,10 @@ void handle_data() {
   data += json_escape(last_cloud_status);
   data += F("\",\"cloud_queue\":");
   data += String(cloud_queue_count);
+  data += F(",\"battery_v\":");
+  data += isnan(battery_voltage_v) ? String("null") : String(battery_voltage_v, 2);
+  data += F(",\"external_power\":");
+  data += external_power_present ? F("true") : F("false");
   data += F(",\"sample_seconds\":60,\"temp_history\":[");
   for (size_t i = 0; i < temp_history_count; ++i) {
     if (i > 0) data += ',';
@@ -843,6 +914,10 @@ void handle_version() {
   data += json_escape(last_cloud_status);
   data += F("\",\"cloud_queue\":");
   data += String(cloud_queue_count);
+  data += F(",\"battery_v\":");
+  data += isnan(battery_voltage_v) ? String("null") : String(battery_voltage_v, 2);
+  data += F(",\"external_power\":");
+  data += external_power_present ? F("true") : F("false");
   data += F("}");
   server.send(200, "application/json", data);
 }
@@ -1415,6 +1490,10 @@ bool check_remote_ota(bool manual) {
     last_remote_ota_status = "sem Wi-Fi para verificar OTA remoto";
     return false;
   }
+  if (!manual && WiFi.RSSI() < REMOTE_OTA_MIN_RSSI) {
+    last_remote_ota_status = "OTA remoto adiado: sinal Wi-Fi fraco";
+    return false;
+  }
 
   remote_ota_running = true;
   last_remote_ota_check_ms = millis();
@@ -1422,10 +1501,12 @@ bool check_remote_ota(bool manual) {
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout(REMOTE_OTA_HTTP_TIMEOUT_MS);
+  uint16_t manifest_timeout =
+      manual ? REMOTE_OTA_HTTP_TIMEOUT_MS : REMOTE_OTA_MANIFEST_TIMEOUT_MS;
+  client.setTimeout(manifest_timeout);
 
   HTTPClient http;
-  http.setTimeout(REMOTE_OTA_HTTP_TIMEOUT_MS);
+  http.setTimeout(manifest_timeout);
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   if (!http.begin(client, REMOTE_OTA_MANIFEST_URL)) {
     last_remote_ota_status = "falha ao abrir manifesto remoto";
@@ -1467,14 +1548,27 @@ bool check_remote_ota(bool manual) {
 }
 
 void maybe_check_remote_ota() {
+  if (!REMOTE_OTA_AUTO_CHECK_ENABLED) {
+    return;
+  }
   if (remote_ota_running || WiFi.status() != WL_CONNECTED || ota_pending_boot) {
     return;
   }
   uint32_t now = millis();
-  if (last_remote_ota_check_ms == 0 ||
-      now - last_remote_ota_check_ms >= REMOTE_OTA_CHECK_MS) {
-    check_remote_ota(false);
+  if (next_remote_ota_check_ms == 0) {
+    next_remote_ota_check_ms =
+        now + REMOTE_OTA_BOOT_DELAY_MS +
+        (esp_random() % REMOTE_OTA_BOOT_JITTER_MS);
+    return;
   }
+  if (int32_t(now - next_remote_ota_check_ms) < 0) {
+    return;
+  }
+
+  check_remote_ota(false);
+  next_remote_ota_check_ms =
+      millis() + REMOTE_OTA_CHECK_MS +
+      (esp_random() % REMOTE_OTA_RETRY_JITTER_MS);
 }
 
 bool cloud_send_sample(const CloudSample &sample) {
@@ -1504,10 +1598,12 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += (!sensor_has_humidity() || isnan(sample.humidity_pct))
              ? String("")
              : String(sample.humidity_pct, 2);
-  url += F("&tensao=&rssi=");
+  url += F("&tensao=");
+  url += isnan(battery_voltage_v) ? String("") : String(battery_voltage_v, 2);
+  url += F("&rssi=");
   url += String(sample.rssi);
   url += F("&idade_s=");
-  uint32_t age_s = (millis() - sample.measured_ms) / 1000UL;
+  uint32_t age_s = sample.offline_age_s + (millis() - sample.measured_ms) / 1000UL;
   url += String(age_s);
   url += F("&sample_id=");
   char sample_id[24];
@@ -1536,6 +1632,10 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += String(cloud_queue_count);
   url += F("&wifi_status=");
   url += url_encode(sta_connected ? sta_ip : String("SEM REDE"));
+  url += F("&battery_v=");
+  url += isnan(battery_voltage_v) ? String("") : String(battery_voltage_v, 2);
+  url += F("&external_power=");
+  url += external_power_present ? F("1") : F("0");
 
   if (!http.begin(client, url)) {
     Serial.println("Cloud: falha ao iniciar HTTPS");
@@ -1543,9 +1643,12 @@ bool cloud_send_sample(const CloudSample &sample) {
     return false;
   }
 
+  feed_watchdog();
   int code = http.GET();
+  feed_watchdog();
   String body = http.getString();
   http.end();
+  feed_watchdog();
   if (body.length() > 80) {
     body = body.substring(0, 80);
   }
@@ -1601,9 +1704,69 @@ bool flush_one_cloud_sample() {
   return true;
 }
 
+void persistent_sample_key(size_t index, char *key, size_t len) {
+  snprintf(key, len, "s%03u", unsigned(index));
+}
+
+void enqueue_persistent_cloud_sample(float temp_c, float humidity_pct) {
+  prefs.begin("offline", false);
+  size_t head = prefs.getUInt("head", 0);
+  size_t count = prefs.getUInt("count", 0);
+  constexpr size_t capacity = 288;
+  size_t index = (head + count) % capacity;
+  if (count == capacity) {
+    head = (head + 1) % capacity;
+    index = (head + count - 1) % capacity;
+  } else {
+    ++count;
+  }
+
+  StoredCloudSample stored = {temp_c, humidity_pct};
+  char key[8];
+  persistent_sample_key(index, key, sizeof(key));
+  prefs.putBytes(key, &stored, sizeof(stored));
+  prefs.putUInt("head", uint32_t(head));
+  prefs.putUInt("count", uint32_t(count));
+  prefs.end();
+  Serial.printf("Bateria: leitura salva na fila persistente (%u/%u)\n",
+                unsigned(count), unsigned(capacity));
+}
+
+void import_persistent_cloud_queue() {
+  prefs.begin("offline", false);
+  size_t head = prefs.getUInt("head", 0);
+  size_t count = prefs.getUInt("count", 0);
+  if (count == 0) {
+    prefs.end();
+    return;
+  }
+
+  constexpr size_t capacity = 288;
+  size_t imported = 0;
+  for (size_t i = 0; i < count && cloud_queue_count < CLOUD_QUEUE_CAPACITY; ++i) {
+    size_t index = (head + i) % capacity;
+    char key[8];
+    persistent_sample_key(index, key, sizeof(key));
+    StoredCloudSample stored = {};
+    if (prefs.getBytes(key, &stored, sizeof(stored)) == sizeof(stored)) {
+      uint32_t offline_age_s = uint32_t((count - i) * (BATTERY_SAMPLE_SLEEP_US / 1000000ULL));
+      CloudSample sample = {stored.temp_c, stored.humidity_pct, 0, millis(),
+                            uint32_t(temp_history_count), offline_age_s};
+      enqueue_cloud_sample(sample);
+      ++imported;
+    }
+    prefs.remove(key);
+  }
+  prefs.putUInt("head", 0);
+  prefs.putUInt("count", 0);
+  prefs.end();
+  Serial.printf("Bateria: importou %u leituras persistentes para envio\n",
+                unsigned(imported));
+}
+
 void send_cloud_measurement(float temp_c, float humidity_pct) {
   CloudSample sample = {temp_c, humidity_pct, WiFi.RSSI(), millis(),
-                        uint32_t(temp_history_count)};
+                        uint32_t(temp_history_count), 0};
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Cloud: sem Wi-Fi, guardando leitura");
     note_cloud_status(0, "sem Wi-Fi");
@@ -1611,14 +1774,12 @@ void send_cloud_measurement(float temp_c, float humidity_pct) {
     return;
   }
 
-  for (uint8_t i = 0; i < CLOUD_FLUSH_PER_CYCLE; ++i) {
-    if (!flush_one_cloud_sample()) {
-      break;
-    }
-    if (cloud_queue_count == 0) {
-      break;
-    }
+  if (cloud_queue_count > 0) {
+    enqueue_cloud_sample(sample);
+    flush_one_cloud_sample();
+    return;
   }
+
   if (!cloud_send_sample(sample)) {
     enqueue_cloud_sample(sample);
   }
@@ -2512,12 +2673,16 @@ void init_display() {
   digitalWrite(GFX_BL, HIGH);
 }
 
-void init_touch() {
+void init_sensor_bus() {
   pinMode(PIN_TOUCH_SDA, INPUT_PULLUP);
   pinMode(PIN_TOUCH_SCL, INPUT_PULLUP);
   Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
   Wire.setTimeOut(I2C_TIMEOUT_MS);
   Wire.setClock(I2C_CLOCK_HZ);
+}
+
+void init_touch() {
+  init_sensor_bus();
   bsp_touch_init(&Wire, PIN_TOUCH_RST, PIN_TOUCH_INT, ROTATION, SCREEN_W,
                  SCREEN_H);
 }
@@ -2620,6 +2785,48 @@ void handle_touch() {
   ui_dirty = true;
 }
 
+void enter_battery_sleep() {
+  pinMode(GFX_BL, OUTPUT);
+  digitalWrite(GFX_BL, LOW);
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  btStop();
+  esp_sleep_enable_timer_wakeup(BATTERY_SAMPLE_SLEEP_US);
+  Serial.println("Bateria: entrando em deep sleep");
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+
+void run_battery_mode() {
+  Serial.println("Bateria: energia externa ausente, modo economico");
+  load_sensor_mode();
+  load_temperature_limits();
+  init_sensor_bus();
+
+  float sht_temp_c = NAN;
+  float humidity_pct = NAN;
+  float temp_c = NAN;
+  esp_err_t sht_result = ESP_ERR_INVALID_STATE;
+  esp_err_t result = ESP_ERR_INVALID_STATE;
+  if (sensor_mode == SensorMode::kSht30) {
+    sht_result = read_sht30(sht_temp_c, humidity_pct);
+    temp_c = sht_temp_c;
+    result = sht_result;
+  } else {
+    result = read_external_temperature(temp_c);
+  }
+
+  if (result == ESP_OK) {
+    enqueue_persistent_cloud_sample(temp_c, humidity_pct);
+    Serial.printf("Bateria: leitura salva temp=%.2f umid=%.2f bat=%.2fV\n",
+                  temp_c, humidity_pct, battery_voltage_v);
+  } else {
+    Serial.printf("Bateria: falha leitura %s\n", esp_err_to_name(result));
+  }
+
+  enter_battery_sleep();
+}
+
 }  // namespace
 
 void setup() {
@@ -2629,12 +2836,17 @@ void setup() {
   cloud_boot_id = esp_random();
   init_diagnostics();
   init_watchdog();
+  init_power_monitor();
+  if (!external_power_present) {
+    run_battery_mode();
+  }
 
   init_display();
   feed_watchdog();
   init_touch();
   feed_watchdog();
   init_wifi();
+  import_persistent_cloud_queue();
   feed_watchdog();
   if (recovery_touch_requested()) {
     recovery_mode = true;
@@ -2664,6 +2876,10 @@ void setup() {
 
 void loop() {
   feed_watchdog();
+  update_power_status();
+  if (!external_power_present) {
+    run_battery_mode();
+  }
   if (recovery_mode) {
     server.handleClient();
     update_wifi_status();
