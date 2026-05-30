@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.13";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.14";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -482,10 +482,22 @@ void text_with_degree_c(int x, int y, const char *value, uint16_t color,
   text(unit_x + radius * 2 + 3 * size, y, "C", color, size);
 }
 
+int degree_c_text_width(const char *value, uint8_t size) {
+  int radius = max<int>(2, 2 * size);
+  return strlen(value) * 6 * size + 3 * size + radius * 2 + 3 * size +
+         6 * size;
+}
+
 void centered_text(int x, int y, int w, const char *value, uint16_t color,
                    uint8_t size) {
   int text_w = strlen(value) * 6 * size;
   text(x + max(0, (w - text_w) / 2), y, value, color, size);
+}
+
+void centered_text_with_degree_c(int x, int y, int w, const char *value,
+                                 uint16_t color, uint8_t size) {
+  int text_w = degree_c_text_width(value, size);
+  text_with_degree_c(x + max(0, (w - text_w) / 2), y, value, color, size);
 }
 
 void draw_barracao_title() {
@@ -2384,12 +2396,16 @@ void draw_dashboard(float temp_c, esp_err_t result) {
 
   char temp_text[18];
   if (result == ESP_OK) {
-    snprintf(temp_text, sizeof(temp_text), "%.1f C", temp_c);
+    snprintf(temp_text, sizeof(temp_text), "%.1f", temp_c);
   } else {
     snprintf(temp_text, sizeof(temp_text), "%s", esp_err_to_name(result));
   }
   centered_text(10, 46, 140, "TEMP", COLOR_YELLOW, 1);
-  centered_text(10, 62, 140, temp_text, result == ESP_OK ? COLOR_PURPLE : COLOR_RED, 3);
+  if (result == ESP_OK) {
+    centered_text_with_degree_c(10, 62, 140, temp_text, COLOR_PURPLE, 3);
+  } else {
+    centered_text(10, 62, 140, temp_text, COLOR_RED, 3);
+  }
 
   char humidity_text[16];
   if (!sensor_has_humidity()) {
@@ -2408,17 +2424,17 @@ void draw_dashboard(float temp_c, esp_err_t result) {
   if (!isnan(daily_min_c) && !isnan(daily_max_c)) {
     text(18, 98, "TEMP", COLOR_YELLOW, 1);
     text(60, 98, "MIN", COLOR_BLUE, 1);
-    snprintf(value_text, sizeof(value_text), "%.1f C", daily_min_c);
-    text(90, 98, value_text, COLOR_WHITE, 1);
+    snprintf(value_text, sizeof(value_text), "%.1f", daily_min_c);
+    text_with_degree_c(90, 98, value_text, COLOR_WHITE, 1);
     text(170, 98, "MAX", COLOR_RED, 1);
-    snprintf(value_text, sizeof(value_text), "%.1f C", daily_max_c);
-    text(202, 98, value_text, COLOR_WHITE, 1);
+    snprintf(value_text, sizeof(value_text), "%.1f", daily_max_c);
+    text_with_degree_c(202, 98, value_text, COLOR_WHITE, 1);
   } else {
     text(18, 98, "TEMP", COLOR_YELLOW, 1);
     text(60, 98, "MIN", COLOR_BLUE, 1);
-    text(90, 98, "--.- C", COLOR_WHITE, 1);
+    text_with_degree_c(90, 98, "--.-", COLOR_WHITE, 1);
     text(170, 98, "MAX", COLOR_RED, 1);
-    text(202, 98, "--.- C", COLOR_WHITE, 1);
+    text_with_degree_c(202, 98, "--.-", COLOR_WHITE, 1);
   }
 
   if (sensor_has_humidity() && !isnan(daily_min_humidity_pct) &&
@@ -2452,11 +2468,15 @@ void draw_graph_view(float temp_c, esp_err_t result) {
 
   char temp_text[18];
   if (result == ESP_OK) {
-    snprintf(temp_text, sizeof(temp_text), "%.1f C", temp_c);
+    snprintf(temp_text, sizeof(temp_text), "%.1f", temp_c);
   } else {
     snprintf(temp_text, sizeof(temp_text), "SENSOR ERR");
   }
-  text(12, 34, temp_text, result == ESP_OK ? COLOR_PURPLE : COLOR_RED, 2);
+  if (result == ESP_OK) {
+    text_with_degree_c(12, 34, temp_text, COLOR_PURPLE, 2);
+  } else {
+    text(12, 34, temp_text, COLOR_RED, 2);
+  }
   char ref_text[24];
   snprintf(ref_text, sizeof(ref_text), "%.1f a %.1f", temperature_min_c,
            temperature_max_c);
@@ -2509,8 +2529,8 @@ void draw_limits_view() {
   gfx->fillRect(92, 34, 44, 34, 0x39E7);
   gfx->drawRect(92, 34, 44, 34, COLOR_WHITE);
   text(111, 45, "-", COLOR_WHITE, 2);
-  snprintf(value_text, sizeof(value_text), "%.1f C", temperature_min_c);
-  text(150, 45, value_text, COLOR_WHITE, 2);
+  snprintf(value_text, sizeof(value_text), "%.1f", temperature_min_c);
+  text_with_degree_c(150, 45, value_text, COLOR_WHITE, 2);
   gfx->fillRect(248, 34, 44, 34, COLOR_PURPLE);
   gfx->drawRect(248, 34, 44, 34, COLOR_WHITE);
   text(266, 45, "+", COLOR_WHITE, 2);
@@ -2519,8 +2539,8 @@ void draw_limits_view() {
   gfx->fillRect(92, 82, 44, 34, 0x39E7);
   gfx->drawRect(92, 82, 44, 34, COLOR_WHITE);
   text(111, 93, "-", COLOR_WHITE, 2);
-  snprintf(value_text, sizeof(value_text), "%.1f C", temperature_max_c);
-  text(150, 93, value_text, COLOR_WHITE, 2);
+  snprintf(value_text, sizeof(value_text), "%.1f", temperature_max_c);
+  text_with_degree_c(150, 93, value_text, COLOR_WHITE, 2);
   gfx->fillRect(248, 82, 44, 34, COLOR_PURPLE);
   gfx->drawRect(248, 82, 44, 34, COLOR_WHITE);
   text(266, 93, "+", COLOR_WHITE, 2);
