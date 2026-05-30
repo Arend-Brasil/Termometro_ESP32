@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.14";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.15";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -2298,7 +2298,10 @@ void draw_block_graph(int plot_x, int plot_y, int plot_w, int plot_h) {
                               ? p
                               : temp_history_count - plotted_count + p;
     float v = history_value(source_index);
-    int px = plot_x + int(p) * step;
+    int px = plot_x;
+    if (plotted_count > 1) {
+      px += int(p * size_t(max(1, plot_w - cell)) / (plotted_count - 1));
+    }
     int py = plot_y + plot_h - cell -
              int((constrain(v, min_v, max_v) - min_v) * (plot_h - cell) /
                  max(0.1f, max_v - min_v));
@@ -2354,7 +2357,10 @@ void draw_graph(int x, int y, int w, int h, esp_err_t result,
                               ? p
                               : temp_history_count - plotted_count + p;
     float v = history_value(source_index);
-    int px = plot_x + int(p);
+    int px = plot_x;
+    if (plotted_count > 1) {
+      px += int(p * size_t(max(1, plot_w - 1)) / (plotted_count - 1));
+    }
     float clamped = constrain(v, min_v, max_v);
     int py = plot_y + plot_h -
              int((clamped - min_v) * plot_h / max(0.1f, max_v - min_v));

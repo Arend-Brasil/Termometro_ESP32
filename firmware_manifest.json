@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.29.14",
+  "version": "2026.05.29.15",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "00fd9d82511cd43250f64c8e197bd97357b785f5b7b6b1a05fe3a974a24b1253",
-  "notes": "Padroniza simbolo de graus nas temperaturas do LCD"
+  "sha256": "544e9a561dba06ebc810b347e73ec863f9b74e477011d92661671b4b231d6e2c",
+  "notes": "Distribui pontos do grafico local pela largura disponivel"
 }
