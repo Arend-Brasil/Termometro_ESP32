@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.29.17",
+  "version": "2026.05.29.18",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "5ac93afe424318bcad5cecda8e133171996d6ffee83a2cd717ad372968188618",
-  "notes": "Corrige downgrade automatico pelo OTA remoto; grafico LCD com linha continua"
+  "sha256": "b9edaf8fcdf10d417175ff8f22465facf3f8647211e4a90d0b8ef95620991419",
+  "notes": "Grafico janela deslizante de 5 horas com historico persistente no NVS"
 }

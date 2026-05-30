@@ -65,7 +65,7 @@ constexpr uint16_t I2C_TIMEOUT_MS = 50;
 constexpr uint32_t I2C_CLOCK_HZ = 50000;
 constexpr uint32_t WATCHDOG_TIMEOUT_MS = 120UL * 1000UL;
 constexpr uint8_t MAX_WIFI_NETWORKS = 5;
-constexpr size_t HISTORY_CAPACITY = 24UL * 60UL;
+constexpr size_t HISTORY_CAPACITY = 300;
 constexpr size_t CLOUD_QUEUE_CAPACITY = 24UL * 60UL;
 constexpr uint8_t CLOUD_FLUSH_PER_CYCLE = 1;
 constexpr const char *CLOUD_URL =
@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.17";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.18";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -134,6 +134,7 @@ float temp_history[HISTORY_CAPACITY] = {};
 float humidity_history[HISTORY_CAPACITY] = {};
 size_t temp_history_count = 0;
 size_t temp_history_head = 0;
+size_t history_save_counter = 0;
 
 struct CloudSample {
   float temp_c;
@@ -201,6 +202,8 @@ void save_sensor_mode(SensorMode mode);
 void reset_measurement_state();
 void load_graph_style();
 void save_graph_style(GraphStyle style);
+void save_history_to_nvs();
+void load_history_from_nvs();
 void load_temperature_limits();
 void save_temperature_limits(float min_c, float max_c);
 void adjust_temperature_limit(bool adjust_min, float delta_c);
@@ -972,6 +975,7 @@ const char *graph_style_label() {
 void reset_measurement_state() {
   temp_history_count = 0;
   temp_history_head = 0;
+  history_save_counter = 0;
   daily_min_c = NAN;
   daily_max_c = NAN;
   daily_min_humidity_pct = NAN;
@@ -984,6 +988,30 @@ void reset_measurement_state() {
   last_history_sample_ms = 0;
   last_cloud_send_ms = 0;
   ui_dirty = true;
+  save_history_to_nvs();
+}
+
+void save_history_to_nvs() {
+  prefs.begin("hist", false);
+  prefs.putBytes("th", temp_history, sizeof(temp_history));
+  prefs.putBytes("hh", humidity_history, sizeof(humidity_history));
+  prefs.putUInt("tc", (uint32_t)temp_history_count);
+  prefs.putUInt("hd", (uint32_t)temp_history_head);
+  prefs.end();
+}
+
+void load_history_from_nvs() {
+  prefs.begin("hist", true);
+  uint32_t count = prefs.getUInt("tc", 0);
+  uint32_t head  = prefs.getUInt("hd", 0);
+  if (count > 0 && count <= HISTORY_CAPACITY && head < HISTORY_CAPACITY) {
+    prefs.getBytes("th", temp_history, sizeof(temp_history));
+    prefs.getBytes("hh", humidity_history, sizeof(humidity_history));
+    temp_history_count = count;
+    temp_history_head  = head;
+    Serial.printf("Historico restaurado: %u amostras\n", (unsigned)count);
+  }
+  prefs.end();
 }
 
 void load_sensor_mode() {
@@ -1145,6 +1173,7 @@ void rollback_to_previous_partition() {
   }
   Serial.printf("OTA: voltando para particao %s\n", previous.c_str());
   clear_ota_pending_state();
+  save_history_to_nvs();
   delay(300);
   ESP.restart();
 }
@@ -1207,6 +1236,7 @@ void handle_ota_done() {
   server.sendHeader("Connection", "close");
   server.send(ok ? 200 : 500, "text/html", page);
   if (ok) {
+    save_history_to_nvs();
     delay(700);
     ESP.restart();
   }
@@ -1333,6 +1363,7 @@ void handle_restart() {
   page += device_id;
   page += F("</code> recebeu o comando de reinicio.</p><p>A pagina tentara voltar ao painel em alguns segundos.</p></body></html>");
   server.send(200, "text/html", page);
+  save_history_to_nvs();
   delay(500);
   ESP.restart();
 }
@@ -1497,6 +1528,7 @@ bool download_and_apply_remote_firmware(const String &url,
   mark_ota_pending_rollback();
   last_remote_ota_status = "firmware remoto recebido, reiniciando";
   Serial.printf("OTA remoto: atualizado %u bytes\n", unsigned(written));
+  save_history_to_nvs();
   delay(500);
   ESP.restart();
   return true;
@@ -2027,6 +2059,7 @@ void init_wifi() {
 
   connect_known_networks();
   load_ota_pending_state();
+  load_history_from_nvs();
   load_sensor_mode();
   load_graph_style();
   load_temperature_limits();
@@ -2242,6 +2275,10 @@ void push_history_sample(float temp_c, float humidity_pct) {
   temp_history_head = (temp_history_head + 1) % HISTORY_CAPACITY;
   if (temp_history_count < HISTORY_CAPACITY) {
     ++temp_history_count;
+  }
+  if (++history_save_counter >= 10) {
+    history_save_counter = 0;
+    save_history_to_nvs();
   }
 }
 
