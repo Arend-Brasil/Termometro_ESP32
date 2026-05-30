@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.18";
+constexpr const char *FIRMWARE_VERSION = "2026.05.30.01";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -91,6 +91,10 @@ constexpr uint16_t COLOR_ORANGE = 0xFD20;
 constexpr uint16_t COLOR_GREEN = 0x07E0;
 constexpr uint16_t COLOR_RED = RGB565_RED;
 constexpr uint16_t COLOR_DIM = 0x7BEF;
+constexpr uint16_t COLOR_FRAME = 0x14B6;      // #1796B0
+constexpr uint16_t COLOR_DARK_BLUE = 0x228F;  // #225378
+constexpr uint16_t COLOR_LIGHT_CYN = 0xAF9E;  // #ACF0F2
+constexpr uint16_t COLOR_MUTED = 0x7411;       // #70808F
 
 Arduino_DataBus *bus =
     new Arduino_HWSPI(15 /* DC */, 14 /* CS */, 1 /* SCK */, 2 /* MOSI */);
@@ -178,8 +182,6 @@ enum class SensorMode { kSht30, kDs18b20 };
 SensorMode sensor_mode = DEFAULT_SHT30_MODE ? SensorMode::kSht30
                                             : SensorMode::kDs18b20;
 
-enum class GraphStyle { kDots, kBlocks };
-GraphStyle graph_style = GraphStyle::kBlocks;
 float temperature_min_c = DEFAULT_LIMIT_MIN_C;
 float temperature_max_c = DEFAULT_LIMIT_MAX_C;
 
@@ -200,8 +202,6 @@ bool sensor_has_humidity();
 void load_sensor_mode();
 void save_sensor_mode(SensorMode mode);
 void reset_measurement_state();
-void load_graph_style();
-void save_graph_style(GraphStyle style);
 void save_history_to_nvs();
 void load_history_from_nvs();
 void load_temperature_limits();
@@ -518,10 +518,10 @@ void draw_barracao_title() {
 
 void menu_bar() {
   gfx->fillRect(6, 150, 308, 16, 0x2104);
-  gfx->drawRect(6, 150, 308, 16, COLOR_DIM);
-  text(24, 154, "STAT", view_mode == ViewMode::kStatus ? COLOR_YELLOW : COLOR_WHITE, 1);
-  text(142, 154, "GRAF", view_mode == ViewMode::kGraph ? COLOR_YELLOW : COLOR_WHITE, 1);
-  text(256, 154, "WIFI", view_mode == ViewMode::kWifi ? COLOR_YELLOW : COLOR_WHITE, 1);
+  gfx->drawRect(6, 150, 308, 16, COLOR_MUTED);
+  text(24, 154, "STAT", view_mode == ViewMode::kStatus ? COLOR_LIGHT_CYN : COLOR_MUTED, 1);
+  text(142, 154, "GRAF", view_mode == ViewMode::kGraph ? COLOR_LIGHT_CYN : COLOR_MUTED, 1);
+  text(256, 154, "WIFI", view_mode == ViewMode::kWifi ? COLOR_LIGHT_CYN : COLOR_MUTED, 1);
 }
 
 void block(int x, int y, int w, int h, uint16_t color, const char *value,
@@ -963,14 +963,6 @@ const char *sensor_mode_label() {
                                            : "DS18B20 Temp";
 }
 
-const char *graph_style_code() {
-  return graph_style == GraphStyle::kBlocks ? "blocks" : "dots";
-}
-
-const char *graph_style_label() {
-  return graph_style == GraphStyle::kBlocks ? "Blocos coloridos"
-                                            : "Pontos";
-}
 
 void reset_measurement_state() {
   temp_history_count = 0;
@@ -1035,26 +1027,6 @@ void save_sensor_mode(SensorMode mode) {
   Serial.printf("Modo de sensor alterado: %s\n", sensor_mode_label());
 }
 
-void load_graph_style() {
-  prefs.begin("system", true);
-  String style = prefs.getString("graph", "blocks");
-  prefs.end();
-  style.toLowerCase();
-  graph_style = style == "dots" ? GraphStyle::kDots : GraphStyle::kBlocks;
-  Serial.printf("Estilo de grafico: %s\n", graph_style_label());
-}
-
-void save_graph_style(GraphStyle style) {
-  if (graph_style == style) {
-    return;
-  }
-  graph_style = style;
-  prefs.begin("system", false);
-  prefs.putString("graph", graph_style_code());
-  prefs.end();
-  ui_dirty = true;
-  Serial.printf("Estilo de grafico alterado: %s\n", graph_style_label());
-}
 
 void load_temperature_limits() {
   prefs.begin("system", true);
@@ -1308,15 +1280,6 @@ void handle_config_page() {
   page += F("<label><input type='radio' name='sensor' value='ds18b20'");
   if (sensor_mode == SensorMode::kDs18b20) page += F(" checked");
   page += F("> DS18B20 - somente temperatura</label>");
-  page += F("<p>Grafico atual: <code>");
-  page += graph_style_label();
-  page += F("</code></p>");
-  page += F("<label><input type='radio' name='graph' value='blocks'");
-  if (graph_style == GraphStyle::kBlocks) page += F(" checked");
-  page += F("> Blocos coloridos</label>");
-  page += F("<label><input type='radio' name='graph' value='dots'");
-  if (graph_style == GraphStyle::kDots) page += F(" checked");
-  page += F("> Pontos</label>");
   page += F("<p>Limites de temperatura:</p><label>Minimo C<input type='number' name='limit_min' step='0.5' value='");
   page += String(temperature_min_c, 1);
   page += F("'></label><label>Maximo C<input type='number' name='limit_max' step='0.5' value='");
@@ -1336,11 +1299,6 @@ void handle_save_config() {
   mode.toLowerCase();
   save_sensor_mode(mode == "ds18b20" ? SensorMode::kDs18b20
                                      : SensorMode::kSht30);
-  String graph = server.arg("graph");
-  graph.toLowerCase();
-  if (graph.length() > 0) {
-    save_graph_style(graph == "dots" ? GraphStyle::kDots : GraphStyle::kBlocks);
-  }
   if (server.hasArg("limit_min") && server.hasArg("limit_max")) {
     save_temperature_limits(server.arg("limit_min").toFloat(),
                             server.arg("limit_max").toFloat());
@@ -2061,7 +2019,6 @@ void init_wifi() {
   load_ota_pending_state();
   load_history_from_nvs();
   load_sensor_mode();
-  load_graph_style();
   load_temperature_limits();
 
   Serial.printf("Codigo do termometro: %s\n", device_id.c_str());
@@ -2398,18 +2355,17 @@ void draw_graph(int x, int y, int w, int h, esp_err_t result,
     snprintf(scale_text, sizeof(scale_text), "%.0f", max_v);
     text(x + w - 24, y + 16, scale_text, COLOR_DIM, 1);
     snprintf(scale_text, sizeof(scale_text), "%.0f", min_v);
-    text(x + w - 24, y + h - 14, scale_text, COLOR_DIM, 1);
+    text(x + w - 24, y + h - 14, scale_text, COLOR_MUTED, 1);
   }
 
-  draw_line_graph(plot_x, plot_y, plot_w, plot_h,
-                  graph_style == GraphStyle::kDots);
+  draw_line_graph(plot_x, plot_y, plot_w, plot_h, false);
 }
 
 void draw_device_strip() {
-  gfx->drawRect(10, 124, 122, 22, sta_connected ? COLOR_CYAN : COLOR_YELLOW);
+  gfx->drawRect(10, 124, 122, 22, COLOR_FRAME);
   text(16, 128, device_id.c_str(), COLOR_WHITE, 1);
   text(58, 128, sta_connected ? sta_ip.c_str() : "AP 192.168.4.1",
-       sta_connected ? COLOR_CYAN : COLOR_YELLOW, 1);
+       COLOR_LIGHT_CYN, 1);
 }
 
 void draw_sht30_status(int x, int y, uint16_t color) {
@@ -2424,17 +2380,17 @@ void draw_dashboard(float temp_c, esp_err_t result) {
 
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8,
-                sensor_error ? COLOR_RED : COLOR_PURPLE);
-  gfx->fillRect(10, 34, 300, 2, COLOR_PURPLE);
+                sensor_error ? COLOR_RED : COLOR_FRAME);
+  gfx->fillRect(10, 34, 300, 2, COLOR_FRAME);
 
   draw_barracao_title();
   text(252, 16, sensor_error ? "ERR" : "OK",
-       sensor_error ? COLOR_RED : COLOR_CYAN, 1);
+       sensor_error ? COLOR_RED : COLOR_LIGHT_CYN, 1);
   char version_text[22];
   snprintf(version_text, sizeof(version_text), "v%s", FIRMWARE_VERSION);
-  text(216, 28, version_text, COLOR_DIM, 1);
-  gfx->drawFastVLine(160, 42, 46, COLOR_DIM);
-  gfx->drawFastHLine(10, 92, 300, COLOR_DIM);
+  text(216, 28, version_text, COLOR_MUTED, 1);
+  gfx->drawFastVLine(160, 42, 46, COLOR_MUTED);
+  gfx->drawFastHLine(10, 92, 300, COLOR_MUTED);
 
   char temp_text[18];
   if (result == ESP_OK) {
@@ -2442,9 +2398,9 @@ void draw_dashboard(float temp_c, esp_err_t result) {
   } else {
     snprintf(temp_text, sizeof(temp_text), "%s", esp_err_to_name(result));
   }
-  centered_text(10, 46, 140, "TEMP", COLOR_YELLOW, 1);
+  centered_text(10, 46, 140, "TEMP", COLOR_LIGHT_CYN, 1);
   if (result == ESP_OK) {
-    centered_text_with_degree_c(10, 62, 140, temp_text, COLOR_PURPLE, 3);
+    centered_text_with_degree_c(10, 62, 140, temp_text, COLOR_LIGHT_CYN, 3);
   } else {
     centered_text(10, 62, 140, temp_text, COLOR_RED, 3);
   }
@@ -2458,13 +2414,13 @@ void draw_dashboard(float temp_c, esp_err_t result) {
     snprintf(humidity_text, sizeof(humidity_text), "SHT ERR");
   }
   centered_text(170, 46, 140, sensor_has_humidity() ? "UMIDADE" : "MODO",
-                COLOR_YELLOW, 1);
+                COLOR_LIGHT_CYN, 1);
   centered_text(170, 62, 140, humidity_text,
-                (!sensor_has_humidity() || last_sht_result == ESP_OK) ? COLOR_PURPLE : COLOR_RED, 3);
+                (!sensor_has_humidity() || last_sht_result == ESP_OK) ? COLOR_LIGHT_CYN : COLOR_RED, 3);
 
   char value_text[16];
   if (!isnan(daily_min_c) && !isnan(daily_max_c)) {
-    text(18, 98, "TEMP", COLOR_YELLOW, 1);
+    text(18, 98, "TEMP", COLOR_LIGHT_CYN, 1);
     text(60, 98, "MIN", COLOR_BLUE, 1);
     snprintf(value_text, sizeof(value_text), "%.1f", daily_min_c);
     text_with_degree_c(90, 98, value_text, COLOR_WHITE, 1);
@@ -2472,7 +2428,7 @@ void draw_dashboard(float temp_c, esp_err_t result) {
     snprintf(value_text, sizeof(value_text), "%.1f", daily_max_c);
     text_with_degree_c(202, 98, value_text, COLOR_WHITE, 1);
   } else {
-    text(18, 98, "TEMP", COLOR_YELLOW, 1);
+    text(18, 98, "TEMP", COLOR_LIGHT_CYN, 1);
     text(60, 98, "MIN", COLOR_BLUE, 1);
     text_with_degree_c(90, 98, "--.-", COLOR_WHITE, 1);
     text(170, 98, "MAX", COLOR_RED, 1);
@@ -2481,7 +2437,7 @@ void draw_dashboard(float temp_c, esp_err_t result) {
 
   if (sensor_has_humidity() && !isnan(daily_min_humidity_pct) &&
       !isnan(daily_max_humidity_pct)) {
-    text(18, 110, "UMID", COLOR_YELLOW, 1);
+    text(18, 110, "UMID", COLOR_LIGHT_CYN, 1);
     text(60, 110, "MIN", COLOR_BLUE, 1);
     snprintf(value_text, sizeof(value_text), "%.1f%%", daily_min_humidity_pct);
     text(90, 110, value_text, COLOR_WHITE, 1);
@@ -2489,7 +2445,7 @@ void draw_dashboard(float temp_c, esp_err_t result) {
     snprintf(value_text, sizeof(value_text), "%.1f%%", daily_max_humidity_pct);
     text(202, 110, value_text, COLOR_WHITE, 1);
   } else {
-    text(18, 110, sensor_has_humidity() ? "UMID" : "SENS", COLOR_YELLOW, 1);
+    text(18, 110, sensor_has_humidity() ? "UMID" : "SENS", COLOR_LIGHT_CYN, 1);
     text(60, 110, sensor_has_humidity() ? "MIN" : "TIPO", COLOR_BLUE, 1);
     text(90, 110, sensor_has_humidity() ? "--.-%" : "DS18", COLOR_WHITE, 1);
     text(170, 110, sensor_has_humidity() ? "MAX" : "", COLOR_RED, 1);
@@ -2504,9 +2460,9 @@ void draw_graph_view(float temp_c, esp_err_t result) {
   bool sensor_error = result != ESP_OK;
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8,
-                sensor_error ? COLOR_RED : COLOR_CYAN);
+                sensor_error ? COLOR_RED : COLOR_FRAME);
   text(12, 12, "GRAFICO LOCAL", COLOR_WHITE, 2);
-  text(224, 16, device_id.c_str(), COLOR_YELLOW, 1);
+  text(224, 16, device_id.c_str(), COLOR_LIGHT_CYN, 1);
 
   char temp_text[18];
   if (result == ESP_OK) {
@@ -2515,14 +2471,14 @@ void draw_graph_view(float temp_c, esp_err_t result) {
     snprintf(temp_text, sizeof(temp_text), "SENSOR ERR");
   }
   if (result == ESP_OK) {
-    text_with_degree_c(12, 34, temp_text, COLOR_PURPLE, 2);
+    text_with_degree_c(12, 34, temp_text, COLOR_LIGHT_CYN, 2);
   } else {
     text(12, 34, temp_text, COLOR_RED, 2);
   }
   char ref_text[24];
   snprintf(ref_text, sizeof(ref_text), "%.1f a %.1f", temperature_min_c,
            temperature_max_c);
-  text_with_degree_c(146, 40, ref_text, COLOR_YELLOW, 1);
+  text_with_degree_c(146, 40, ref_text, COLOR_LIGHT_CYN, 1);
   draw_graph(10, 58, 300, 86, result, false);
   menu_bar();
 }
@@ -2534,37 +2490,37 @@ void draw_wifi_view() {
   }
 
   gfx->fillScreen(COLOR_BLACK);
-  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, sta_connected ? COLOR_CYAN : COLOR_YELLOW);
+  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_FRAME);
   text(12, 12, "CONFIG WIFI", COLOR_WHITE, 2);
-  text(12, 34, "REDE", COLOR_YELLOW, 1);
+  text(12, 34, "REDE", COLOR_LIGHT_CYN, 1);
   text(58, 34, sta_connected ? sta_ssid.c_str() : "NAO CONECTADO",
-       sta_connected ? COLOR_CYAN : COLOR_RED, 1);
-  text(12, 50, "IP", COLOR_YELLOW, 1);
-  text(48, 50, sta_ip.c_str(), sta_connected ? COLOR_CYAN : COLOR_YELLOW, 1);
+       sta_connected ? COLOR_LIGHT_CYN : COLOR_RED, 1);
+  text(12, 50, "IP", COLOR_LIGHT_CYN, 1);
+  text(48, 50, sta_ip.c_str(), COLOR_LIGHT_CYN, 1);
 
-  uint16_t button_color = ap_enabled ? COLOR_PURPLE : 0x39E7;
+  uint16_t button_color = ap_enabled ? COLOR_FRAME : 0x39E7;
   gfx->fillRect(12, 70, 142, 42, button_color);
   gfx->drawRect(12, 70, 142, 42, COLOR_WHITE);
   text(28, 80, ap_enabled ? "AP OFF" : "AP CONFIG", COLOR_WHITE, 2);
 
-  gfx->fillRect(166, 70, 142, 42, COLOR_PURPLE);
+  gfx->fillRect(166, 70, 142, 42, COLOR_FRAME);
   gfx->drawRect(166, 70, 142, 42, COLOR_WHITE);
   text(190, 80, "LIMITES", COLOR_WHITE, 2);
 
-  text(12, 120, ap_enabled ? "AP" : "AP OFF", COLOR_YELLOW, 1);
+  text(12, 120, ap_enabled ? "AP" : "AP OFF", COLOR_LIGHT_CYN, 1);
   text(58, 120, ap_enabled ? ap_ssid.c_str() : "toque para configurar",
-       ap_enabled ? COLOR_WHITE : COLOR_DIM, 1);
+       ap_enabled ? COLOR_WHITE : COLOR_MUTED, 1);
   if (ap_enabled) {
-    text(210, 120, "192.168.4.1", COLOR_CYAN, 1);
+    text(210, 120, "192.168.4.1", COLOR_LIGHT_CYN, 1);
   }
   menu_bar();
 }
 
 void draw_limits_view() {
   gfx->fillScreen(COLOR_BLACK);
-  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_PURPLE);
+  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_FRAME);
   text(12, 10, "LIMITES TEMP", COLOR_WHITE, 2);
-  text(214, 16, "WIFI volta", COLOR_DIM, 1);
+  text(214, 16, "WIFI volta", COLOR_MUTED, 1);
 
   char value_text[18];
   text(18, 44, "MINIMO", COLOR_BLUE, 1);
@@ -2573,7 +2529,7 @@ void draw_limits_view() {
   text(111, 45, "-", COLOR_WHITE, 2);
   snprintf(value_text, sizeof(value_text), "%.1f", temperature_min_c);
   text_with_degree_c(150, 45, value_text, COLOR_WHITE, 2);
-  gfx->fillRect(248, 34, 44, 34, COLOR_PURPLE);
+  gfx->fillRect(248, 34, 44, 34, COLOR_FRAME);
   gfx->drawRect(248, 34, 44, 34, COLOR_WHITE);
   text(266, 45, "+", COLOR_WHITE, 2);
 
@@ -2583,23 +2539,21 @@ void draw_limits_view() {
   text(111, 93, "-", COLOR_WHITE, 2);
   snprintf(value_text, sizeof(value_text), "%.1f", temperature_max_c);
   text_with_degree_c(150, 93, value_text, COLOR_WHITE, 2);
-  gfx->fillRect(248, 82, 44, 34, COLOR_PURPLE);
+  gfx->fillRect(248, 82, 44, 34, COLOR_FRAME);
   gfx->drawRect(248, 82, 44, 34, COLOR_WHITE);
   text(266, 93, "+", COLOR_WHITE, 2);
 
-  text(18, 126, "ajuste em passos de 0.5 C", COLOR_DIM, 1);
+  text(18, 126, "ajuste em passos de 0.5 C", COLOR_MUTED, 1);
   menu_bar();
 }
 
 void draw_config_view() {
   gfx->fillScreen(COLOR_BLACK);
-  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_YELLOW);
+  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_FRAME);
   text(12, 8, "CONFIG", COLOR_WHITE, 2);
 
-  uint16_t sht_color = sensor_mode == SensorMode::kSht30 ? COLOR_PURPLE : 0x39E7;
-  uint16_t ds_color = sensor_mode == SensorMode::kDs18b20 ? COLOR_PURPLE : 0x39E7;
-  uint16_t block_color = graph_style == GraphStyle::kBlocks ? COLOR_PURPLE : 0x39E7;
-  uint16_t dot_color = graph_style == GraphStyle::kDots ? COLOR_PURPLE : 0x39E7;
+  uint16_t sht_color = sensor_mode == SensorMode::kSht30 ? COLOR_FRAME : 0x39E7;
+  uint16_t ds_color = sensor_mode == SensorMode::kDs18b20 ? COLOR_FRAME : 0x39E7;
   gfx->fillRect(12, 34, 142, 22, sht_color);
   gfx->drawRect(12, 34, 142, 22, COLOR_WHITE);
   text(42, 41, "SHT30", COLOR_WHITE, 1);
@@ -2608,17 +2562,9 @@ void draw_config_view() {
   gfx->drawRect(166, 34, 142, 22, COLOR_WHITE);
   text(204, 41, "DS18B20", COLOR_WHITE, 1);
 
-  gfx->fillRect(12, 62, 142, 22, block_color);
-  gfx->drawRect(12, 62, 142, 22, COLOR_WHITE);
-  text(44, 69, "BLOCOS", COLOR_WHITE, 1);
-
-  gfx->fillRect(166, 62, 142, 22, dot_color);
-  gfx->drawRect(166, 62, 142, 22, COLOR_WHITE);
-  text(210, 69, "PONTOS", COLOR_WHITE, 1);
-
-  text(12, 100, "Ajuste de limite fica", COLOR_DIM, 1);
-  text(12, 116, "em WIFI > LIMITES", COLOR_DIM, 1);
-  text(12, 140, "barra inferior sai", COLOR_DIM, 1);
+  text(12, 80, "Ajuste de limite fica", COLOR_MUTED, 1);
+  text(12, 96, "em WIFI > LIMITES", COLOR_MUTED, 1);
+  text(12, 140, "barra inferior sai", COLOR_MUTED, 1);
   menu_bar();
 }
 
@@ -2649,17 +2595,17 @@ void draw_contact_screen() {
 
 void draw_recovery_screen() {
   gfx->fillScreen(COLOR_BLACK);
-  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_YELLOW);
-  text(18, 18, "RECUPERACAO", COLOR_YELLOW, 2);
+  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_FRAME);
+  text(18, 18, "RECUPERACAO", COLOR_LIGHT_CYN, 2);
   text(18, 48, "Wi-Fi:", COLOR_WHITE, 1);
-  text(78, 48, ap_ssid.c_str(), COLOR_CYAN, 1);
+  text(78, 48, ap_ssid.c_str(), COLOR_LIGHT_CYN, 1);
   text(18, 66, "Senha:", COLOR_WHITE, 1);
-  text(78, 66, "12345678", COLOR_CYAN, 1);
+  text(78, 66, "12345678", COLOR_LIGHT_CYN, 1);
   text(18, 88, "Abra:", COLOR_WHITE, 1);
-  text(78, 88, "192.168.4.1/ota", COLOR_CYAN, 1);
+  text(78, 88, "192.168.4.1/ota", COLOR_LIGHT_CYN, 1);
   text(18, 112, "User:", COLOR_WHITE, 1);
-  text(78, 112, OTA_USER, COLOR_CYAN, 1);
-  text(18, 130, "Senha = token-codigo", COLOR_DIM, 1);
+  text(78, 112, OTA_USER, COLOR_LIGHT_CYN, 1);
+  text(18, 130, "Senha = token-codigo", COLOR_MUTED, 1);
 }
 
 bool intro_logo_pressed() {
@@ -2813,10 +2759,6 @@ void handle_touch() {
       save_sensor_mode(SensorMode::kSht30);
     } else if (y >= 34 && y < 60) {
       save_sensor_mode(SensorMode::kDs18b20);
-    } else if (y >= 62 && y < 88 && x < 160) {
-      save_graph_style(GraphStyle::kBlocks);
-    } else if (y >= 62 && y < 88) {
-      save_graph_style(GraphStyle::kDots);
     }
     ui_dirty = true;
     return;
