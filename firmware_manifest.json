@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.30.04",
+  "version": "2026.05.30.05",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "8b53a212ac38e0f3eed93e7dfb1681152279da94294c7678e7c753aa5f3905ec",
-  "notes": "Editor de nome com seletor de caracter por toque"
+  "sha256": "e3a60d938c33c4b82d2ebba7304eed6e31ee884b1ddf159fad53f5bccf28c1ff",
+  "notes": "Nome do termometro dinamico na web e na planilha"
 }

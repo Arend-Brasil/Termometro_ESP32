@@ -71,9 +71,8 @@ constexpr uint8_t CLOUD_FLUSH_PER_CYCLE = 1;
 constexpr const char *CLOUD_URL =
     "https://script.google.com/macros/s/AKfycbyNDa3mWvWCrRzgCJwfNmlzy40BkUpI0ZcFrS_tEVs6nWOOw4MvDXUIhbbzEUNAfZgP/exec";
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
-constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.30.04";
+constexpr const char *FIRMWARE_VERSION = "2026.05.30.05";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -745,10 +744,13 @@ void handle_root() {
   String page;
   page.reserve(5200);
   page += F("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>");
-  page += F("<title>Barracão ");
-  page += device_id;
+  page += F("<title>");
+  page += device_name;
+  page += F(" ");
   page += F("</title><style>body{font-family:Arial,sans-serif;margin:0;background:#101418;color:#f6f7f9}.wrap{max-width:760px;margin:0 auto;padding:20px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.muted{color:#9aa7b2}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.card{border:1px solid #303a44;background:#182028;padding:16px;text-align:center}.label{color:#f4c542;font-size:13px}.value{font-size:44px;font-weight:700;color:#a45bff;margin-top:8px}.sub{margin-top:10px;color:#cdd6df}.min{color:#4a90ff}.max{color:#ff3333}.chartTitle{margin:18px 0 8px;color:#cdd6df;font-size:14px}canvas{width:100%;height:220px;background:#12181e;border:1px solid #303a44}a{color:#7fd7ff;text-decoration:none}@media(max-width:560px){.grid{grid-template-columns:1fr}.value{font-size:38px}}</style></head><body><div class='wrap'>");
-  page += F("<header><div><h2>Barracão</h2><div class='muted'>");
+  page += F("<header><div><h2>");
+  page += device_name;
+  page += F("</h2><div class='muted'>");
   page += device_id;
   page += F(" &nbsp; v");
   page += FIRMWARE_VERSION;
@@ -1655,7 +1657,7 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += F("?token=");
   url += url_encode(CLOUD_TOKEN);
   url += F("&device_id=");
-  url += url_encode(CLOUD_DEVICE_ID);
+  url += url_encode(device_name);
   url += F("&temperatura=");
   url += isnan(sample.temp_c) ? String("") : String(sample.temp_c, 2);
   url += F("&umidade=");
