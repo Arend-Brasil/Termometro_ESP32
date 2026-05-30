@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.15";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.16";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -2285,27 +2285,36 @@ uint16_t graph_temperature_color(float value) {
   return mix_color(255, 125, 0, 255, 0, 0, (norm - 0.90f) / 0.10f);
 }
 
-void draw_block_graph(int plot_x, int plot_y, int plot_w, int plot_h) {
-  int cell = plot_h < 32 ? 4 : 6;
-  int gap = 2;
-  int step = cell + gap;
-  int columns = max(1, plot_w / step);
-  size_t plotted_count = min<size_t>(temp_history_count, columns);
+void draw_line_graph(int plot_x, int plot_y, int plot_w, int plot_h,
+                     bool with_dots) {
   float min_v = temperature_min_c;
   float max_v = temperature_max_c;
-  for (size_t p = 0; p < plotted_count; ++p) {
-    size_t source_index = temp_history_count <= size_t(columns)
-                              ? p
-                              : temp_history_count - plotted_count + p;
-    float v = history_value(source_index);
-    int px = plot_x;
-    if (plotted_count > 1) {
-      px += int(p * size_t(max(1, plot_w - cell)) / (plotted_count - 1));
+  float range_v = max(0.1f, max_v - min_v);
+
+  size_t n = min<size_t>(temp_history_count, (size_t)max(2, plot_w));
+  if (n < 2) return;
+
+  int dot_r = (plot_h < 32) ? 1 : 2;
+  bool show_dots = with_dots && (n <= (size_t)(plot_w / 3));
+
+  int prev_px = -1, prev_py = -1;
+  for (size_t p = 0; p < n; ++p) {
+    size_t src = (temp_history_count <= (size_t)plot_w)
+                     ? p
+                     : (temp_history_count - n + p);
+    float v = history_value(src);
+    int px = plot_x + (n > 1 ? (int)p * (plot_w - 1) / (int)(n - 1) : 0);
+    int py = plot_y + plot_h - 1 -
+             (int)((constrain(v, min_v, max_v) - min_v) * (plot_h - 1) / range_v);
+    uint16_t color = graph_temperature_color(v);
+    if (prev_px >= 0) {
+      gfx->drawLine(prev_px, prev_py, px, py, color);
     }
-    int py = plot_y + plot_h - cell -
-             int((constrain(v, min_v, max_v) - min_v) * (plot_h - cell) /
-                 max(0.1f, max_v - min_v));
-    gfx->fillRect(px, py, cell, cell, graph_temperature_color(v));
+    if (show_dots) {
+      gfx->fillRect(px - dot_r, py - dot_r, dot_r * 2 + 1, dot_r * 2 + 1, color);
+    }
+    prev_px = px;
+    prev_py = py;
   }
 }
 
@@ -2345,28 +2354,8 @@ void draw_graph(int x, int y, int w, int h, esp_err_t result,
     text(x + w - 24, y + h - 14, scale_text, COLOR_DIM, 1);
   }
 
-  if (graph_style == GraphStyle::kBlocks) {
-    draw_block_graph(plot_x, plot_y, plot_w, plot_h);
-    return;
-  }
-
-  size_t plotted_count = min<size_t>(temp_history_count, plot_w);
-  int square = compact ? 3 : 4;
-  for (size_t p = 0; p < plotted_count; ++p) {
-    size_t source_index = temp_history_count <= size_t(plot_w)
-                              ? p
-                              : temp_history_count - plotted_count + p;
-    float v = history_value(source_index);
-    int px = plot_x;
-    if (plotted_count > 1) {
-      px += int(p * size_t(max(1, plot_w - 1)) / (plotted_count - 1));
-    }
-    float clamped = constrain(v, min_v, max_v);
-    int py = plot_y + plot_h -
-             int((clamped - min_v) * plot_h / max(0.1f, max_v - min_v));
-    uint16_t color = graph_temperature_color(v);
-    gfx->fillRect(px - square / 2, py - square / 2, square, square, color);
-  }
+  draw_line_graph(plot_x, plot_y, plot_w, plot_h,
+                  graph_style == GraphStyle::kDots);
 }
 
 void draw_device_strip() {
