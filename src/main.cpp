@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.16";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.17";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -1502,6 +1502,16 @@ bool download_and_apply_remote_firmware(const String &url,
   return true;
 }
 
+bool is_newer_version(const char *candidate, const char *current) {
+  int cy, cm, cd, cn, vy, vm, vd, vn;
+  if (sscanf(current, "%d.%d.%d.%d", &cy, &cm, &cd, &cn) != 4) return false;
+  if (sscanf(candidate, "%d.%d.%d.%d", &vy, &vm, &vd, &vn) != 4) return false;
+  if (vy != cy) return vy > cy;
+  if (vm != cm) return vm > cm;
+  if (vd != cd) return vd > cd;
+  return vn > cn;
+}
+
 bool check_remote_ota(bool manual) {
   if (remote_ota_running) {
     last_remote_ota_status = "OTA remoto ja em andamento";
@@ -1555,7 +1565,7 @@ bool check_remote_ota(bool manual) {
 
   Serial.printf("OTA remoto: atual=%s remoto=%s\n", FIRMWARE_VERSION,
                 version.c_str());
-  if (version == FIRMWARE_VERSION) {
+  if (!is_newer_version(version.c_str(), FIRMWARE_VERSION)) {
     last_remote_ota_status = manual ? "ja esta na ultima versao"
                                     : "sem atualizacao remota";
     remote_ota_running = false;
