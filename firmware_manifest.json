@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.30.02",
+  "version": "2026.05.30.03",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "6152a0f342edebdc8e2bdcfaae72f366c47640a2892af0be9ccd43ed63a23a99",
-  "notes": "Temperatura instantanea em #225378 nas telas STAT e GRAFICO"
+  "sha256": "086bde83b32cedf19c003b6d10bb6fd411bb2bcae98d926bfb4360d3cd2c3e63",
+  "notes": "Grafico expandido, icone WiFi, teclado para nome do termometro"
 }

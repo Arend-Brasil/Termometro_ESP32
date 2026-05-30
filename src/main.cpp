@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.30.02";
+constexpr const char *FIRMWARE_VERSION = "2026.05.30.03";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -134,6 +134,9 @@ String last_cloud_status = "boot";
 bool external_power_present = true;
 float battery_voltage_v = NAN;
 
+String device_name = "BARRACAO";
+String editing_name = "";
+
 float temp_history[HISTORY_CAPACITY] = {};
 float humidity_history[HISTORY_CAPACITY] = {};
 size_t temp_history_count = 0;
@@ -185,7 +188,7 @@ SensorMode sensor_mode = DEFAULT_SHT30_MODE ? SensorMode::kSht30
 float temperature_min_c = DEFAULT_LIMIT_MIN_C;
 float temperature_max_c = DEFAULT_LIMIT_MAX_C;
 
-enum class ViewMode { kStatus, kGraph, kWifi, kConfig, kLimits };
+enum class ViewMode { kStatus, kGraph, kWifi, kConfig, kLimits, kNameEdit };
 ViewMode view_mode = ViewMode::kStatus;
 
 void update_wifi_status();
@@ -193,6 +196,8 @@ void toggle_config_ap();
 float history_value(size_t index);
 float humidity_history_value(size_t index);
 String ota_password();
+void load_device_name();
+void save_device_name(const String &name);
 bool ota_authenticated();
 bool require_ota_auth();
 void check_pending_ota_health();
@@ -504,16 +509,35 @@ void centered_text_with_degree_c(int x, int y, int w, const char *value,
 }
 
 void draw_barracao_title() {
-  constexpr const char *title = "BARRACAO";
   constexpr uint8_t size = 2;
+  const char *title = device_name.c_str();
   int text_w = strlen(title) * 6 * size;
-  int x = (SCREEN_W - text_w) / 2;
-  int y = 12;
-  text(x, y, title, COLOR_WHITE, size);
-  int accent_x = x + 6 * 6 * size + 3;
-  gfx->drawPixel(accent_x, y - 3, COLOR_WHITE);
-  gfx->drawLine(accent_x + 1, y - 4, accent_x + 4, y - 4, COLOR_WHITE);
-  gfx->drawPixel(accent_x + 5, y - 3, COLOR_WHITE);
+  int x = max(8, (SCREEN_W - text_w) / 2);
+  text(x, 12, title, COLOR_WHITE, size);
+}
+
+void draw_wifi_icon(int x, int y) {
+  // 4 bars: widths 3px, gap 1px, heights 4/7/10/13 bottom-aligned
+  const int bar_w = 3;
+  const int bar_gap = 1;
+  const int max_h = 13;
+  gfx->fillRect(x, y, 15, max_h, COLOR_BLACK);
+  if (!sta_connected) {
+    for (int i = 0; i < 4; i++) {
+      int h = 4 + i * 3;
+      gfx->drawRect(x + i * (bar_w + bar_gap), y + max_h - h, bar_w, h, COLOR_RED);
+    }
+    return;
+  }
+  int rssi = WiFi.RSSI();
+  int filled = rssi >= -55 ? 4 : rssi >= -65 ? 3 : rssi >= -75 ? 2 : 1;
+  for (int i = 0; i < 4; i++) {
+    int h = 4 + i * 3;
+    int bx = x + i * (bar_w + bar_gap);
+    int by = y + max_h - h;
+    if (i < filled) gfx->fillRect(bx, by, bar_w, h, COLOR_LIGHT_CYN);
+    else             gfx->drawRect(bx, by, bar_w, h, COLOR_MUTED);
+  }
 }
 
 void menu_bar() {
@@ -1013,6 +1037,24 @@ void load_sensor_mode() {
   mode.toLowerCase();
   sensor_mode = mode == "ds18b20" ? SensorMode::kDs18b20 : SensorMode::kSht30;
   Serial.printf("Modo de sensor: %s\n", sensor_mode_label());
+}
+
+void load_device_name() {
+  prefs.begin("system", true);
+  device_name = prefs.getString("devname", "BARRACAO");
+  prefs.end();
+  device_name.trim();
+  if (device_name.length() == 0) device_name = "BARRACAO";
+  Serial.printf("Nome do dispositivo: %s\n", device_name.c_str());
+}
+
+void save_device_name(const String &name) {
+  device_name = name.length() > 0 ? name : String("BARRACAO");
+  prefs.begin("system", false);
+  prefs.putString("devname", device_name);
+  prefs.end();
+  ui_dirty = true;
+  Serial.printf("Nome salvo: %s\n", device_name.c_str());
 }
 
 void save_sensor_mode(SensorMode mode) {
@@ -2019,6 +2061,7 @@ void init_wifi() {
   load_ota_pending_state();
   load_history_from_nvs();
   load_sensor_mode();
+  load_device_name();
   load_temperature_limits();
 
   Serial.printf("Codigo do termometro: %s\n", device_id.c_str());
@@ -2384,8 +2427,11 @@ void draw_dashboard(float temp_c, esp_err_t result) {
   gfx->fillRect(10, 34, 300, 2, COLOR_FRAME);
 
   draw_barracao_title();
-  text(252, 16, sensor_error ? "ERR" : "OK",
-       sensor_error ? COLOR_RED : COLOR_LIGHT_CYN, 1);
+  if (sensor_error) {
+    text(292, 12, "ERR", COLOR_RED, 1);
+  } else {
+    draw_wifi_icon(295, 10);
+  }
   char version_text[22];
   snprintf(version_text, sizeof(version_text), "v%s", FIRMWARE_VERSION);
   text(216, 28, version_text, COLOR_MUTED, 1);
@@ -2461,25 +2507,20 @@ void draw_graph_view(float temp_c, esp_err_t result) {
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8,
                 sensor_error ? COLOR_RED : COLOR_FRAME);
-  text(12, 12, "GRAFICO LOCAL", COLOR_WHITE, 2);
-  text(224, 16, device_id.c_str(), COLOR_LIGHT_CYN, 1);
 
   char temp_text[18];
   if (result == ESP_OK) {
     snprintf(temp_text, sizeof(temp_text), "%.1f", temp_c);
+    text_with_degree_c(10, 10, temp_text, COLOR_DARK_BLUE, 2);
+    char ref_text[24];
+    snprintf(ref_text, sizeof(ref_text), "%.1f a %.1f", temperature_min_c,
+             temperature_max_c);
+    text_with_degree_c(160, 15, ref_text, COLOR_LIGHT_CYN, 1);
   } else {
     snprintf(temp_text, sizeof(temp_text), "SENSOR ERR");
+    text(10, 10, temp_text, COLOR_RED, 2);
   }
-  if (result == ESP_OK) {
-    text_with_degree_c(12, 34, temp_text, COLOR_DARK_BLUE, 2);
-  } else {
-    text(12, 34, temp_text, COLOR_RED, 2);
-  }
-  char ref_text[24];
-  snprintf(ref_text, sizeof(ref_text), "%.1f a %.1f", temperature_min_c,
-           temperature_max_c);
-  text_with_degree_c(146, 40, ref_text, COLOR_LIGHT_CYN, 1);
-  draw_graph(10, 58, 300, 86, result, false);
+  draw_graph(10, 34, 300, 110, result, false);
   menu_bar();
 }
 
@@ -2491,27 +2532,33 @@ void draw_wifi_view() {
 
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_FRAME);
-  text(12, 12, "CONFIG WIFI", COLOR_WHITE, 2);
-  text(12, 34, "REDE", COLOR_LIGHT_CYN, 1);
-  text(58, 34, sta_connected ? sta_ssid.c_str() : "NAO CONECTADO",
+  text(12, 10, "CONFIG", COLOR_WHITE, 2);
+
+  text(12, 32, "REDE", COLOR_LIGHT_CYN, 1);
+  text(52, 32, sta_connected ? sta_ssid.c_str() : "NAO CONECTADO",
        sta_connected ? COLOR_LIGHT_CYN : COLOR_RED, 1);
-  text(12, 50, "IP", COLOR_LIGHT_CYN, 1);
-  text(48, 50, sta_ip.c_str(), COLOR_LIGHT_CYN, 1);
+  text(12, 46, "IP", COLOR_LIGHT_CYN, 1);
+  text(36, 46, sta_ip.c_str(), COLOR_LIGHT_CYN, 1);
 
-  uint16_t button_color = ap_enabled ? COLOR_FRAME : 0x39E7;
-  gfx->fillRect(12, 70, 142, 42, button_color);
-  gfx->drawRect(12, 70, 142, 42, COLOR_WHITE);
-  text(28, 80, ap_enabled ? "AP OFF" : "AP CONFIG", COLOR_WHITE, 2);
+  // Row of 3 buttons: AP | LIMITES | NOME
+  uint16_t ap_btn = ap_enabled ? COLOR_FRAME : 0x39E7;
+  gfx->fillRect(12, 64, 92, 36, ap_btn);
+  gfx->drawRect(12, 64, 92, 36, COLOR_WHITE);
+  text(ap_enabled ? 22 : 14, 74, ap_enabled ? "AP OFF" : "AP CONFIG", COLOR_WHITE, 1);
 
-  gfx->fillRect(166, 70, 142, 42, COLOR_FRAME);
-  gfx->drawRect(166, 70, 142, 42, COLOR_WHITE);
-  text(190, 80, "LIMITES", COLOR_WHITE, 2);
+  gfx->fillRect(116, 64, 92, 36, COLOR_FRAME);
+  gfx->drawRect(116, 64, 92, 36, COLOR_WHITE);
+  text(130, 74, "LIMITES", COLOR_WHITE, 1);
 
-  text(12, 120, ap_enabled ? "AP" : "AP OFF", COLOR_LIGHT_CYN, 1);
-  text(58, 120, ap_enabled ? ap_ssid.c_str() : "toque para configurar",
+  gfx->fillRect(220, 64, 92, 36, COLOR_DARK_BLUE);
+  gfx->drawRect(220, 64, 92, 36, COLOR_WHITE);
+  text(246, 74, "NOME", COLOR_WHITE, 1);
+
+  text(12, 110, ap_enabled ? "AP" : "AP OFF", COLOR_LIGHT_CYN, 1);
+  text(56, 110, ap_enabled ? ap_ssid.c_str() : "toque para configurar",
        ap_enabled ? COLOR_WHITE : COLOR_MUTED, 1);
   if (ap_enabled) {
-    text(210, 120, "192.168.4.1", COLOR_LIGHT_CYN, 1);
+    text(210, 122, "192.168.4.1", COLOR_LIGHT_CYN, 1);
   }
   menu_bar();
 }
@@ -2566,6 +2613,46 @@ void draw_config_view() {
   text(12, 96, "em WIFI > LIMITES", COLOR_MUTED, 1);
   text(12, 140, "barra inferior sai", COLOR_MUTED, 1);
   menu_bar();
+}
+
+constexpr char kKeyboard[4][10] = {
+  {'A','B','C','D','E','F','G','H','I','J'},
+  {'K','L','M','N','O','P','Q','R','S','T'},
+  {'U','V','W','X','Y','Z','0','1','2','3'},
+  {'4','5','6','7','8','9',' ','\x08','\x0D','-'}
+};
+
+void draw_name_edit_view() {
+  gfx->fillScreen(COLOR_BLACK);
+  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_FRAME);
+
+  // Name display bar at top
+  gfx->fillRect(6, 6, 308, 28, COLOR_DARK_BLUE);
+  String display = editing_name + "_";
+  text(10, 12, display.c_str(), COLOR_WHITE, 2);
+
+  // 4 rows × 10 keys: key width=30, gap=2, start x=1
+  for (int r = 0; r < 4; r++) {
+    for (int c = 0; c < 10; c++) {
+      int kx = 1 + c * 32;
+      int ky = 40 + r * 28;
+      char ch = kKeyboard[r][c];
+
+      gfx->fillRect(kx, ky, 30, 26, COLOR_DARK_BLUE);
+      gfx->drawRect(kx, ky, 30, 26, COLOR_FRAME);
+
+      if (ch == ' ') {
+        text(kx + 3, ky + 9, "SPC", COLOR_LIGHT_CYN, 1);
+      } else if (ch == '\x08') {
+        text(kx + 3, ky + 9, "DEL", COLOR_LIGHT_CYN, 1);
+      } else if (ch == '\x0D') {
+        text(kx + 7, ky + 9, "OK", COLOR_LIGHT_CYN, 1);
+      } else {
+        char label[2] = {ch, 0};
+        text(kx + 11, ky + 9, label, COLOR_WHITE, 1);
+      }
+    }
+  }
 }
 
 void draw_intro_screen() {
@@ -2687,6 +2774,8 @@ void draw_current_view(float temp_c, esp_err_t result) {
     draw_config_view();
   } else if (view_mode == ViewMode::kLimits) {
     draw_limits_view();
+  } else if (view_mode == ViewMode::kNameEdit) {
+    draw_name_edit_view();
   } else {
     draw_dashboard(temp_c, result);
   }
@@ -2734,6 +2823,32 @@ void handle_touch() {
 
   if (view_mode != ViewMode::kWifi && hidden_config_taps != 0) {
     hidden_config_taps = 0;
+  }
+
+  if (view_mode == ViewMode::kNameEdit) {
+    if (y < 40) {
+      // Tapped name bar → cancel, volta para wifi
+      view_mode = ViewMode::kWifi;
+      wifi_view_auto_ap_done = false;
+      ui_dirty = true;
+      return;
+    }
+    int row = (y - 40) / 28;
+    int col = (x - 1) / 32;
+    if (row >= 0 && row < 4 && col >= 0 && col < 10) {
+      char ch = kKeyboard[row][col];
+      if (ch == '\x0D') {
+        save_device_name(editing_name);
+        view_mode = ViewMode::kWifi;
+        wifi_view_auto_ap_done = false;
+      } else if (ch == '\x08') {
+        if (editing_name.length() > 0) editing_name.remove(editing_name.length() - 1);
+      } else if (editing_name.length() < 16) {
+        editing_name += ch;
+      }
+      ui_dirty = true;
+    }
+    return;
   }
 
   if (view_mode == ViewMode::kLimits) {
@@ -2791,13 +2906,16 @@ void handle_touch() {
     }
   }
 
-  if (view_mode == ViewMode::kWifi && y >= 70 && y < 116) {
-    if (x < 160) {
+  if (view_mode == ViewMode::kWifi && y >= 64 && y < 104) {
+    if (x < 116) {
       toggle_config_ap();
-    } else {
+    } else if (x < 220) {
       view_mode = ViewMode::kLimits;
-      ui_dirty = true;
+    } else {
+      editing_name = device_name;
+      view_mode = ViewMode::kNameEdit;
     }
+    ui_dirty = true;
     return;
   }
 
