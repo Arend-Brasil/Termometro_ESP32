@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.30.01";
+constexpr const char *FIRMWARE_VERSION = "2026.05.30.02";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -2400,7 +2400,7 @@ void draw_dashboard(float temp_c, esp_err_t result) {
   }
   centered_text(10, 46, 140, "TEMP", COLOR_LIGHT_CYN, 1);
   if (result == ESP_OK) {
-    centered_text_with_degree_c(10, 62, 140, temp_text, COLOR_LIGHT_CYN, 3);
+    centered_text_with_degree_c(10, 62, 140, temp_text, COLOR_DARK_BLUE, 3);
   } else {
     centered_text(10, 62, 140, temp_text, COLOR_RED, 3);
   }
@@ -2471,7 +2471,7 @@ void draw_graph_view(float temp_c, esp_err_t result) {
     snprintf(temp_text, sizeof(temp_text), "SENSOR ERR");
   }
   if (result == ESP_OK) {
-    text_with_degree_c(12, 34, temp_text, COLOR_LIGHT_CYN, 2);
+    text_with_degree_c(12, 34, temp_text, COLOR_DARK_BLUE, 2);
   } else {
     text(12, 34, temp_text, COLOR_RED, 2);
   }
