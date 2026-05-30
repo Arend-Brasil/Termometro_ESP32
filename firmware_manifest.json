@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.29.10",
+  "version": "2026.05.29.11",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "18b73ad6413e5df93119f03b378132e904613f1c7196c899731403f3741725f6",
-  "notes": "Ativa OTA remoto automatico controlado para manutencao em campo"
+  "sha256": "723ff0bc54e72a2d34226f790846c0f5f7d13825ca1296d88549e6c796aafc5a",
+  "notes": "Restaura timeout confiavel para envio ao Google Apps Script"
 }

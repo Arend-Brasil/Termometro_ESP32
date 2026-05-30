@@ -119,12 +119,25 @@ function checkTemperatureAlert(data) {
   if (temp === null) {
     return;
   }
+  var limitMin = parseNumber(data.limit_min);
+  var limitMax = parseNumber(data.limit_max);
+  if (limitMin === null) {
+    limitMin = ALERT_MIN_C;
+  }
+  if (limitMax === null) {
+    limitMax = ALERT_MAX_C;
+  }
+  if (limitMin > limitMax) {
+    var swap = limitMin;
+    limitMin = limitMax;
+    limitMax = swap;
+  }
 
   var deviceId = String(data.device_id || "MEDIDOR");
   var state = "NORMAL";
-  if (temp < ALERT_MIN_C) {
+  if (temp < limitMin) {
     state = "BAIXA";
-  } else if (temp > ALERT_MAX_C) {
+  } else if (temp > limitMax) {
     state = "ALTA";
   }
 
@@ -156,7 +169,7 @@ function checkTemperatureAlert(data) {
     : "Temperatura fora da faixa configurada.\n\n";
   body += "Aparelho: " + deviceId + "\n";
   body += "Temperatura: " + temp.toFixed(2) + " C\n";
-  body += "Faixa permitida: " + ALERT_MIN_C.toFixed(1) + " a " + ALERT_MAX_C.toFixed(1) + " C\n";
+  body += "Faixa permitida: " + limitMin.toFixed(1) + " a " + limitMax.toFixed(1) + " C\n";
   body += "Horario: " + timeText + "\n";
 
   if (shouldSendTelegram) {

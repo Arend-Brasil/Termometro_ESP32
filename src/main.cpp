@@ -49,7 +49,7 @@ constexpr uint32_t HISTORY_SAMPLE_MS = 60UL * 1000UL;
 constexpr uint32_t CLOUD_SEND_MS = 60UL * 1000UL;
 constexpr uint64_t BATTERY_SAMPLE_SLEEP_US = 5ULL * 60ULL * 1000ULL * 1000ULL;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 3500;
-constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 1500;
+constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 8000;
 constexpr uint32_t INTRO_TIMEOUT_MS = 5000;
 constexpr uint32_t OTA_CONFIRM_MS = 30UL * 1000UL;
 constexpr uint32_t OTA_ROLLBACK_MS = 5UL * 60UL * 1000UL;
@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.10";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.11";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
