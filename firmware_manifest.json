@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.29.12",
+  "version": "2026.05.29.13",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "788bfc5eddfd75b6c5eb442bc9f0e08e816af85dd66e9954b1c12e6d7bddbd68",
-  "notes": "Move ajuste de limites para tela dedicada acessivel pelo Wi-Fi"
+  "sha256": "c80e5b351714551441b70e4dc5d1347264314396d76841e5810b3f50f060c155",
+  "notes": "Corrige simbolo de graus na tela de grafico local"
 }

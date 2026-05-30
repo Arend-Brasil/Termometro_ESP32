@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.12";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.13";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -471,6 +471,15 @@ void text(int x, int y, const char *value, uint16_t color, uint8_t size) {
   gfx->setTextColor(color);
   gfx->setTextSize(size);
   gfx->print(value);
+}
+
+void text_with_degree_c(int x, int y, const char *value, uint16_t color,
+                        uint8_t size) {
+  text(x, y, value, color, size);
+  int unit_x = x + strlen(value) * 6 * size + 3 * size;
+  int radius = max<int>(2, 2 * size);
+  gfx->drawCircle(unit_x + radius, y + radius, radius, color);
+  text(unit_x + radius * 2 + 3 * size, y, "C", color, size);
 }
 
 void centered_text(int x, int y, int w, const char *value, uint16_t color,
@@ -2291,9 +2300,9 @@ void draw_graph(int x, int y, int w, int h, esp_err_t result,
   bool compact = h < 48;
   if (!compact && show_scale) {
     char title[28];
-    snprintf(title, sizeof(title), "%.1f a %.1f \xC2\xB0""C", temperature_min_c,
+    snprintf(title, sizeof(title), "%.1f a %.1f", temperature_min_c,
              temperature_max_c);
-    text(x + 6, y + 6, title, COLOR_YELLOW, 1);
+    text_with_degree_c(x + 6, y + 6, title, COLOR_YELLOW, 1);
   }
 
   if (result != ESP_OK) {
@@ -2449,9 +2458,9 @@ void draw_graph_view(float temp_c, esp_err_t result) {
   }
   text(12, 34, temp_text, result == ESP_OK ? COLOR_PURPLE : COLOR_RED, 2);
   char ref_text[24];
-  snprintf(ref_text, sizeof(ref_text), "%.1f a %.1f \xC2\xB0""C", temperature_min_c,
+  snprintf(ref_text, sizeof(ref_text), "%.1f a %.1f", temperature_min_c,
            temperature_max_c);
-  text(146, 40, ref_text, COLOR_YELLOW, 1);
+  text_with_degree_c(146, 40, ref_text, COLOR_YELLOW, 1);
   draw_graph(10, 58, 300, 86, result, false);
   menu_bar();
 }
