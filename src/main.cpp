@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.29.11";
+constexpr const char *FIRMWARE_VERSION = "2026.05.29.12";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -182,7 +182,7 @@ GraphStyle graph_style = GraphStyle::kBlocks;
 float temperature_min_c = DEFAULT_LIMIT_MIN_C;
 float temperature_max_c = DEFAULT_LIMIT_MAX_C;
 
-enum class ViewMode { kStatus, kGraph, kWifi, kConfig };
+enum class ViewMode { kStatus, kGraph, kWifi, kConfig, kLimits };
 ViewMode view_mode = ViewMode::kStatus;
 
 void update_wifi_status();
@@ -2472,9 +2472,13 @@ void draw_wifi_view() {
   text(48, 50, sta_ip.c_str(), sta_connected ? COLOR_CYAN : COLOR_YELLOW, 1);
 
   uint16_t button_color = ap_enabled ? COLOR_PURPLE : 0x39E7;
-  gfx->fillRect(12, 70, 296, 42, button_color);
-  gfx->drawRect(12, 70, 296, 42, COLOR_WHITE);
-  text(24, 80, ap_enabled ? "DESLIGAR AP CONFIG" : "LIGAR AP CONFIG", COLOR_WHITE, 2);
+  gfx->fillRect(12, 70, 142, 42, button_color);
+  gfx->drawRect(12, 70, 142, 42, COLOR_WHITE);
+  text(28, 80, ap_enabled ? "AP OFF" : "AP CONFIG", COLOR_WHITE, 2);
+
+  gfx->fillRect(166, 70, 142, 42, COLOR_PURPLE);
+  gfx->drawRect(166, 70, 142, 42, COLOR_WHITE);
+  text(190, 80, "LIMITES", COLOR_WHITE, 2);
 
   text(12, 120, ap_enabled ? "AP" : "AP OFF", COLOR_YELLOW, 1);
   text(58, 120, ap_enabled ? ap_ssid.c_str() : "toque para configurar",
@@ -2485,14 +2489,41 @@ void draw_wifi_view() {
   menu_bar();
 }
 
+void draw_limits_view() {
+  gfx->fillScreen(COLOR_BLACK);
+  gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_PURPLE);
+  text(12, 10, "LIMITES TEMP", COLOR_WHITE, 2);
+  text(214, 16, "WIFI volta", COLOR_DIM, 1);
+
+  char value_text[18];
+  text(18, 44, "MINIMO", COLOR_BLUE, 1);
+  gfx->fillRect(92, 34, 44, 34, 0x39E7);
+  gfx->drawRect(92, 34, 44, 34, COLOR_WHITE);
+  text(111, 45, "-", COLOR_WHITE, 2);
+  snprintf(value_text, sizeof(value_text), "%.1f C", temperature_min_c);
+  text(150, 45, value_text, COLOR_WHITE, 2);
+  gfx->fillRect(248, 34, 44, 34, COLOR_PURPLE);
+  gfx->drawRect(248, 34, 44, 34, COLOR_WHITE);
+  text(266, 45, "+", COLOR_WHITE, 2);
+
+  text(18, 92, "MAXIMO", COLOR_RED, 1);
+  gfx->fillRect(92, 82, 44, 34, 0x39E7);
+  gfx->drawRect(92, 82, 44, 34, COLOR_WHITE);
+  text(111, 93, "-", COLOR_WHITE, 2);
+  snprintf(value_text, sizeof(value_text), "%.1f C", temperature_max_c);
+  text(150, 93, value_text, COLOR_WHITE, 2);
+  gfx->fillRect(248, 82, 44, 34, COLOR_PURPLE);
+  gfx->drawRect(248, 82, 44, 34, COLOR_WHITE);
+  text(266, 93, "+", COLOR_WHITE, 2);
+
+  text(18, 126, "ajuste em passos de 0.5 C", COLOR_DIM, 1);
+  menu_bar();
+}
+
 void draw_config_view() {
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_YELLOW);
   text(12, 8, "CONFIG", COLOR_WHITE, 2);
-  char limit_text[28];
-  snprintf(limit_text, sizeof(limit_text), "REF %.1f A %.1f C",
-           temperature_min_c, temperature_max_c);
-  text(112, 12, limit_text, COLOR_CYAN, 1);
 
   uint16_t sht_color = sensor_mode == SensorMode::kSht30 ? COLOR_PURPLE : 0x39E7;
   uint16_t ds_color = sensor_mode == SensorMode::kDs18b20 ? COLOR_PURPLE : 0x39E7;
@@ -2514,27 +2545,8 @@ void draw_config_view() {
   gfx->drawRect(166, 62, 142, 22, COLOR_WHITE);
   text(210, 69, "PONTOS", COLOR_WHITE, 1);
 
-  text(12, 94, "MIN", COLOR_BLUE, 1);
-  gfx->fillRect(52, 90, 36, 24, 0x39E7);
-  gfx->drawRect(52, 90, 36, 24, COLOR_WHITE);
-  text(66, 98, "-", COLOR_WHITE, 1);
-  snprintf(limit_text, sizeof(limit_text), "%.1f", temperature_min_c);
-  text(96, 98, limit_text, COLOR_WHITE, 1);
-  gfx->fillRect(132, 90, 36, 24, COLOR_PURPLE);
-  gfx->drawRect(132, 90, 36, 24, COLOR_WHITE);
-  text(146, 98, "+", COLOR_WHITE, 1);
-
-  text(180, 94, "MAX", COLOR_RED, 1);
-  gfx->fillRect(220, 90, 36, 24, 0x39E7);
-  gfx->drawRect(220, 90, 36, 24, COLOR_WHITE);
-  text(234, 98, "-", COLOR_WHITE, 1);
-  snprintf(limit_text, sizeof(limit_text), "%.1f", temperature_max_c);
-  text(258, 98, limit_text, COLOR_WHITE, 1);
-  gfx->fillRect(284, 90, 24, 24, COLOR_PURPLE);
-  gfx->drawRect(284, 90, 24, 24, COLOR_WHITE);
-  text(293, 98, "+", COLOR_WHITE, 1);
-
-  text(12, 122, "toque +/- ajusta 0.5 C", COLOR_DIM, 1);
+  text(12, 100, "Ajuste de limite fica", COLOR_DIM, 1);
+  text(12, 116, "em WIFI > LIMITES", COLOR_DIM, 1);
   text(12, 140, "barra inferior sai", COLOR_DIM, 1);
   menu_bar();
 }
@@ -2656,6 +2668,8 @@ void draw_current_view(float temp_c, esp_err_t result) {
     draw_wifi_view();
   } else if (view_mode == ViewMode::kConfig) {
     draw_config_view();
+  } else if (view_mode == ViewMode::kLimits) {
+    draw_limits_view();
   } else {
     draw_dashboard(temp_c, result);
   }
@@ -2705,6 +2719,22 @@ void handle_touch() {
     hidden_config_taps = 0;
   }
 
+  if (view_mode == ViewMode::kLimits) {
+    if (y >= 146) {
+      view_mode = ViewMode::kWifi;
+    } else if (y >= 34 && y < 72 && x >= 92 && x < 136) {
+      adjust_temperature_limit(true, -LIMIT_STEP_C);
+    } else if (y >= 34 && y < 72 && x >= 248 && x < 292) {
+      adjust_temperature_limit(true, LIMIT_STEP_C);
+    } else if (y >= 82 && y < 120 && x >= 92 && x < 136) {
+      adjust_temperature_limit(false, -LIMIT_STEP_C);
+    } else if (y >= 82 && y < 120 && x >= 248 && x < 292) {
+      adjust_temperature_limit(false, LIMIT_STEP_C);
+    }
+    ui_dirty = true;
+    return;
+  }
+
   if (view_mode == ViewMode::kConfig) {
     if (y >= 146) {
       view_mode = ViewMode::kStatus;
@@ -2716,14 +2746,6 @@ void handle_touch() {
       save_graph_style(GraphStyle::kBlocks);
     } else if (y >= 62 && y < 88) {
       save_graph_style(GraphStyle::kDots);
-    } else if (y >= 90 && y < 118 && x >= 52 && x < 88) {
-      adjust_temperature_limit(true, -LIMIT_STEP_C);
-    } else if (y >= 90 && y < 118 && x >= 132 && x < 168) {
-      adjust_temperature_limit(true, LIMIT_STEP_C);
-    } else if (y >= 90 && y < 118 && x >= 220 && x < 256) {
-      adjust_temperature_limit(false, -LIMIT_STEP_C);
-    } else if (y >= 90 && y < 118 && x >= 284 && x < 310) {
-      adjust_temperature_limit(false, LIMIT_STEP_C);
     }
     ui_dirty = true;
     return;
@@ -2756,8 +2778,13 @@ void handle_touch() {
     }
   }
 
-  if (view_mode == ViewMode::kWifi && y < 130) {
-    toggle_config_ap();
+  if (view_mode == ViewMode::kWifi && y >= 70 && y < 116) {
+    if (x < 160) {
+      toggle_config_ap();
+    } else {
+      view_mode = ViewMode::kLimits;
+      ui_dirty = true;
+    }
     return;
   }
 
