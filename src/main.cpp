@@ -73,7 +73,7 @@ constexpr const char *CLOUD_URL =
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *CLOUD_DEVICE_ID = "BARRACAO-001";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.30.03";
+constexpr const char *FIRMWARE_VERSION = "2026.05.30.04";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -136,6 +136,7 @@ float battery_voltage_v = NAN;
 
 String device_name = "BARRACAO";
 String editing_name = "";
+int8_t edit_cursor = 0;
 
 float temp_history[HISTORY_CAPACITY] = {};
 float humidity_history[HISTORY_CAPACITY] = {};
@@ -2615,44 +2616,55 @@ void draw_config_view() {
   menu_bar();
 }
 
-constexpr char kKeyboard[4][10] = {
-  {'A','B','C','D','E','F','G','H','I','J'},
-  {'K','L','M','N','O','P','Q','R','S','T'},
-  {'U','V','W','X','Y','Z','0','1','2','3'},
-  {'4','5','6','7','8','9',' ','\x08','\x0D','-'}
-};
+const char kEditChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -";
+constexpr uint8_t kEditCharsCount = 38;
+
+static int char_to_edit_idx(char c) {
+  for (int i = 0; i < kEditCharsCount; i++) {
+    if (kEditChars[i] == c) return i;
+  }
+  return 0;
+}
 
 void draw_name_edit_view() {
   gfx->fillScreen(COLOR_BLACK);
   gfx->drawRect(4, 4, SCREEN_W - 8, SCREEN_H - 8, COLOR_FRAME);
 
-  // Name display bar at top
-  gfx->fillRect(6, 6, 308, 28, COLOR_DARK_BLUE);
-  String display = editing_name + "_";
-  text(10, 12, display.c_str(), COLOR_WHITE, 2);
-
-  // 4 rows × 10 keys: key width=30, gap=2, start x=1
-  for (int r = 0; r < 4; r++) {
-    for (int c = 0; c < 10; c++) {
-      int kx = 1 + c * 32;
-      int ky = 40 + r * 28;
-      char ch = kKeyboard[r][c];
-
-      gfx->fillRect(kx, ky, 30, 26, COLOR_DARK_BLUE);
-      gfx->drawRect(kx, ky, 30, 26, COLOR_FRAME);
-
-      if (ch == ' ') {
-        text(kx + 3, ky + 9, "SPC", COLOR_LIGHT_CYN, 1);
-      } else if (ch == '\x08') {
-        text(kx + 3, ky + 9, "DEL", COLOR_LIGHT_CYN, 1);
-      } else if (ch == '\x0D') {
-        text(kx + 7, ky + 9, "OK", COLOR_LIGHT_CYN, 1);
-      } else {
-        char label[2] = {ch, 0};
-        text(kx + 11, ky + 9, label, COLOR_WHITE, 1);
-      }
-    }
+  // --- Barra de nome: caractere do cursor destacado ---
+  gfx->fillRect(6, 6, 308, 26, COLOR_DARK_BLUE);
+  int name_len = (int)editing_name.length();
+  for (int i = 0; i < name_len && i < 16; i++) {
+    int cx = 10 + i * 14;
+    if (i == edit_cursor) gfx->fillRect(cx - 1, 7, 13, 22, COLOR_FRAME);
+    char ch[2] = {editing_name[i], 0};
+    text(cx, 12, ch, COLOR_WHITE, 2);
   }
+
+  // --- Zona do caracter grande (y=36..110): toque esq=recua, dir=avanca ---
+  gfx->fillRect(5, 36, 310, 74, 0x1082);
+  char cur = (edit_cursor < name_len) ? editing_name[edit_cursor] : ' ';
+  char big[2] = {cur == ' ' ? '_' : cur, 0};
+  text((SCREEN_W - 36) / 2, 46, big, COLOR_WHITE, 6);   // size 6 = 36x48 px
+  text(14, 54, "<", COLOR_LIGHT_CYN, 4);
+  text(282, 54, ">", COLOR_LIGHT_CYN, 4);
+
+  // --- 4 botoes grandes (y=114, h=34) ---
+  // DEL
+  gfx->fillRect(6,   114, 74, 34, 0x39E7);
+  gfx->drawRect(6,   114, 74, 34, COLOR_WHITE);
+  text(25,  123, "DEL", COLOR_WHITE, 2);
+  // < posicao anterior
+  gfx->fillRect(84,  114, 74, 34, COLOR_DARK_BLUE);
+  gfx->drawRect(84,  114, 74, 34, COLOR_WHITE);
+  text(115, 123, "<", COLOR_LIGHT_CYN, 2);
+  // > proxima posicao
+  gfx->fillRect(162, 114, 74, 34, COLOR_DARK_BLUE);
+  gfx->drawRect(162, 114, 74, 34, COLOR_WHITE);
+  text(193, 123, ">", COLOR_LIGHT_CYN, 2);
+  // OK
+  gfx->fillRect(240, 114, 74, 34, COLOR_FRAME);
+  gfx->drawRect(240, 114, 74, 34, COLOR_WHITE);
+  text(265, 123, "OK", COLOR_WHITE, 2);
 }
 
 void draw_intro_screen() {
@@ -2826,28 +2838,49 @@ void handle_touch() {
   }
 
   if (view_mode == ViewMode::kNameEdit) {
-    if (y < 40) {
-      // Tapped name bar → cancel, volta para wifi
+    int name_len = (int)editing_name.length();
+    if (y < 36) {
+      // Barra do nome → cancela
       view_mode = ViewMode::kWifi;
       wifi_view_auto_ap_done = false;
-      ui_dirty = true;
-      return;
-    }
-    int row = (y - 40) / 28;
-    int col = (x - 1) / 32;
-    if (row >= 0 && row < 4 && col >= 0 && col < 10) {
-      char ch = kKeyboard[row][col];
-      if (ch == '\x0D') {
+    } else if (y < 112) {
+      // Zona do caracter grande: esq=recua, dir=avanca
+      if (name_len > 0 && edit_cursor < name_len) {
+        int idx = char_to_edit_idx(editing_name[edit_cursor]);
+        idx = (x < 160) ? (idx - 1 + kEditCharsCount) % kEditCharsCount
+                        : (idx + 1) % kEditCharsCount;
+        editing_name[edit_cursor] = kEditChars[idx];
+      }
+    } else if (y < 150) {
+      if (x < 84) {
+        // DEL
+        if (name_len > 1) {
+          editing_name.remove(edit_cursor, 1);
+          name_len = editing_name.length();
+          if (edit_cursor >= name_len) edit_cursor = name_len - 1;
+        } else {
+          editing_name = "A";
+          edit_cursor = 0;
+        }
+      } else if (x < 162) {
+        // < posicao anterior
+        if (edit_cursor > 0) edit_cursor--;
+      } else if (x < 240) {
+        // > proxima posicao (append 'A' se estiver no fim)
+        if (edit_cursor < name_len - 1) {
+          edit_cursor++;
+        } else if (name_len < 16) {
+          editing_name += 'A';
+          edit_cursor = name_len;
+        }
+      } else {
+        // OK — salva e volta
         save_device_name(editing_name);
         view_mode = ViewMode::kWifi;
         wifi_view_auto_ap_done = false;
-      } else if (ch == '\x08') {
-        if (editing_name.length() > 0) editing_name.remove(editing_name.length() - 1);
-      } else if (editing_name.length() < 16) {
-        editing_name += ch;
       }
-      ui_dirty = true;
     }
+    ui_dirty = true;
     return;
   }
 
@@ -2912,7 +2945,8 @@ void handle_touch() {
     } else if (x < 220) {
       view_mode = ViewMode::kLimits;
     } else {
-      editing_name = device_name;
+      editing_name = device_name.length() > 0 ? device_name : String("A");
+      edit_cursor = 0;
       view_mode = ViewMode::kNameEdit;
     }
     ui_dirty = true;
