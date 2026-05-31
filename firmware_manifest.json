@@ -1,6 +1,6 @@
 {
-  "version": "2026.05.31.03",
+  "version": "2026.05.31.04",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "3df349455d10c7e4ab46ab8f7a90472136c465ea4f93125dd8fd767465b58cd4",
-  "notes": "Acentos no LCD via Latin-1; editor de nome com 50 caracteres"
+  "sha256": "3cd7afe53c35b00015f719ac295ae8338dc9b1c5c1d5db284e64b3b5e3e8468d",
+  "notes": "Cores do grafico web por TMIN-TMAX; nome editavel na pagina /config"
 }
