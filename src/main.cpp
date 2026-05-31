@@ -72,7 +72,7 @@ constexpr const char *CLOUD_URL =
     "https://script.google.com/macros/s/AKfycbyNDa3mWvWCrRzgCJwfNmlzy40BkUpI0ZcFrS_tEVs6nWOOw4MvDXUIhbbzEUNAfZgP/exec";
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.31.01";
+constexpr const char *FIRMWARE_VERSION = "2026.05.31.02";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -508,12 +508,42 @@ void centered_text_with_degree_c(int x, int y, int w, const char *value,
   text_with_degree_c(x + max(0, (w - text_w) / 2), y, value, color, size);
 }
 
+static char latin1_base(uint8_t c1) {
+  if (c1 >= 0x80 && c1 <= 0x86) return 'A';
+  if (c1 == 0x87) return 'C';
+  if (c1 >= 0x88 && c1 <= 0x8B) return 'E';
+  if (c1 >= 0x8C && c1 <= 0x8F) return 'I';
+  if (c1 == 0x91) return 'N';
+  if (c1 >= 0x92 && c1 <= 0x98) return 'O';
+  if (c1 >= 0x99 && c1 <= 0x9C) return 'U';
+  if (c1 == 0x9D) return 'Y';
+  if (c1 >= 0xA0 && c1 <= 0xA6) return 'a';
+  if (c1 == 0xA7) return 'c';
+  if (c1 >= 0xA8 && c1 <= 0xAB) return 'e';
+  if (c1 >= 0xAC && c1 <= 0xAF) return 'i';
+  if (c1 >= 0xB2 && c1 <= 0xB8) return 'o';
+  if (c1 >= 0xB9 && c1 <= 0xBC) return 'u';
+  return '?';
+}
+
+static String lcd_safe_str(const String &s) {
+  String r;
+  r.reserve(s.length());
+  for (int i = 0; i < (int)s.length(); ) {
+    uint8_t c0 = (uint8_t)s[i];
+    if (c0 < 0x80) { r += (char)c0; i++; }
+    else if (c0 == 0xC3 && i + 1 < (int)s.length()) { r += latin1_base((uint8_t)s[i + 1]); i += 2; }
+    else { r += '?'; i++; }
+  }
+  return r;
+}
+
 void draw_barracao_title() {
   constexpr uint8_t size = 2;
-  const char *title = device_name.c_str();
-  int text_w = strlen(title) * 6 * size;
+  String lcd_title = lcd_safe_str(device_name);
+  int text_w = (int)lcd_title.length() * 6 * size;
   int x = max(8, (SCREEN_W - text_w) / 2);
-  text(x, 12, title, COLOR_WHITE, size);
+  text(x, 12, lcd_title.c_str(), COLOR_WHITE, size);
 }
 
 void draw_wifi_icon(int x, int y) {
@@ -783,7 +813,7 @@ void handle_root() {
   page += String(temperature_min_c, 1);
   page += F(",TMAX=");
   page += String(temperature_max_c, 1);
-  page += F(";let t=[],h=[];function nums(a){return(a||[]).filter(v=>typeof v==='number')}const P=[[0,[0,0,130]],[.033,[0,0,200]],[.067,[0,30,255]],[.1,[0,80,255]],[.133,[0,140,255]],[.167,[0,200,255]],[.2,[0,240,230]],[.233,[0,255,180]],[.267,[0,255,120]],[.3,[30,255,60]],[.333,[80,255,30]],[.367,[140,255,20]],[.4,[200,255,60]],[.433,[230,255,130]],[.467,[245,255,200]],[.5,[245,245,245]],[.533,[255,255,180]],[.567,[255,255,80]],[.6,[255,250,0]],[.633,[255,230,0]],[.667,[255,200,0]],[.7,[255,170,0]],[.733,[255,130,0]],[.767,[255,90,0]],[.8,[255,50,0]],[.833,[255,20,0]],[.867,[255,0,0]],[.9,[220,0,0]],[.933,[170,0,0]],[.967,[120,0,0]],[1,[80,0,0]]];function tcol(v){let n=Math.max(0,Math.min(1,(v-TMIN)/Math.max(.1,TMAX-TMIN)));for(let i=1;i<P.length;i++){if(n<=P[i][0]){let t=(n-P[i-1][0])/(P[i][0]-P[i-1][0]),a=P[i-1][1],b=P[i][1];return'rgb('+Math.round(a[0]+(b[0]-a[0])*t)+','+Math.round(a[1]+(b[1]-a[1])*t)+','+Math.round(a[2]+(b[2]-a[2])*t)+')'}}return'rgb(80,0,0)'}function range(a,minRange){let mn=Math.min(...a),mx=Math.max(...a),r=mx-mn,p=Math.max(1,r*.2);mn-=p;mx+=p;if(mx-mn<minRange){let m=(mx+mn)/2;mn=m-minRange/2;mx=m+minRange/2}return[mn,mx]}function drawOne(id,a,col,minRange,fixed){a=nums(a);const c=document.getElementById(id);if(!c)return;const x=c.getContext('2d'),w=c.width,H=c.height;x.clearRect(0,0,w,H);x.strokeStyle='#303a44';x.strokeRect(0,0,w,H);let mn=fixed?fixed[0]:0,mx=fixed?fixed[1]:0;if(a.length>=2&&!fixed){[mn,mx]=range(a,minRange)}x.fillStyle='#9aa7b2';x.font='12px Arial';x.fillText(String(mx),w-32,20);x.fillText(String(mn),w-32,H-12);if(a.length<2)return;x.strokeStyle='#ff3333';x.beginPath();x.moveTo(10,10);x.lineTo(w-38,10);x.moveTo(10,H-10);x.lineTo(w-38,H-10);x.stroke();x.lineWidth=2;for(let i=1;i<a.length;i++){let p0=10+(i-1)*(w-48)/Math.max(1,a.length-1),p1=10+i*(w-48)/Math.max(1,a.length-1),v0=Math.max(mn,Math.min(mx,a[i-1])),v1=Math.max(mn,Math.min(mx,a[i]));x.beginPath();x.strokeStyle=fixed?tcol((a[i-1]+a[i])/2):col;x.moveTo(p0,10+(mx-v0)*(H-20)/(mx-mn));x.lineTo(p1,10+(mx-v1)*(H-20)/(mx-mn));x.stroke()}}function draw(){drawOne('tempChart',t,'#ff9d00',TMAX-TMIN,[TMIN,TMAX]);if(HAS_HUM)drawOne('humChart',h,'#a45bff',10)}async function upd(){try{let r=await fetch('/data',{cache:'no-store'}),d=await r.json();document.getElementById('temp').textContent=d.temp_text;document.getElementById('hum').textContent=d.hum_text;document.getElementById('tmin').textContent=d.temp_min_text;document.getElementById('tmax').textContent=d.temp_max_text;document.getElementById('hmin').textContent=d.humidity_min_text;document.getElementById('hmax').textContent=d.humidity_max_text;t=d.temp_history||[];h=d.humidity_history||[];draw()}catch(e){}}function addCursor(id,getData,isFixed){var cv=document.getElementById(id);if(!cv)return;var raf=null;function show(cx){if(raf)cancelAnimationFrame(raf);raf=requestAnimationFrame(function(){draw();var a=nums(getData());if(a.length<2)return;var ctx=cv.getContext('2d'),w=cv.width,H=cv.height,rect=cv.getBoundingClientRect(),cpx=(cx-rect.left)*w/rect.width,idx=Math.max(0,Math.min(a.length-1,Math.round((cpx-10)*(a.length-1)/Math.max(1,w-48)))),v=a[idx],px=10+idx*(w-48)/Math.max(1,a.length-1),mn=isFixed?TMIN:range(a,10)[0],mx=isFixed?TMAX:range(a,10)[1],py=10+(mx-Math.max(mn,Math.min(mx,v)))*(H-20)/(mx-mn);ctx.save();ctx.strokeStyle='rgba(255,255,255,.2)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(px,10);ctx.lineTo(px,H-10);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(px,py,5,0,Math.PI*2);ctx.fillStyle=isFixed?tcol(v):'#a45bff';ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();var lbl=v.toFixed(1),lx=Math.max(4,Math.min(w-50,px-18)),ly=py>35?py-10:py+22;ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(lx-3,ly-14,44,17);ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.fillText(lbl,lx,ly);ctx.restore();})}function hide(){if(raf)cancelAnimationFrame(raf);raf=null;draw();}cv.addEventListener('mousemove',function(e){show(e.clientX);});cv.addEventListener('mouseleave',hide);cv.addEventListener('touchstart',function(e){e.preventDefault();show(e.touches[0].clientX);},{passive:false});cv.addEventListener('touchmove',function(e){e.preventDefault();show(e.touches[0].clientX);},{passive:false});cv.addEventListener('touchend',hide);}addCursor('tempChart',function(){return t;},true);if(HAS_HUM)addCursor('humChart',function(){return h;},false);setInterval(upd,10000);upd();</script></div></body></html>");
+  page += F(";let t=[],h=[];function nums(a){return(a||[]).filter(v=>typeof v==='number')}const P=[[0,[0,0,130]],[.033,[0,0,200]],[.067,[0,30,255]],[.1,[0,80,255]],[.133,[0,140,255]],[.167,[0,200,255]],[.2,[0,240,230]],[.233,[0,255,180]],[.267,[0,255,120]],[.3,[30,255,60]],[.333,[80,255,30]],[.367,[140,255,20]],[.4,[200,255,60]],[.433,[230,255,130]],[.467,[245,255,200]],[.5,[245,245,245]],[.533,[255,255,180]],[.567,[255,255,80]],[.6,[255,250,0]],[.633,[255,230,0]],[.667,[255,200,0]],[.7,[255,170,0]],[.733,[255,130,0]],[.767,[255,90,0]],[.8,[255,50,0]],[.833,[255,20,0]],[.867,[255,0,0]],[.9,[220,0,0]],[.933,[170,0,0]],[.967,[120,0,0]],[1,[80,0,0]]];function tcolN(n){for(let i=1;i<P.length;i++){if(n<=P[i][0]){let t=(n-P[i-1][0])/(P[i][0]-P[i-1][0]),a=P[i-1][1],b=P[i][1];return'rgb('+Math.round(a[0]+(b[0]-a[0])*t)+','+Math.round(a[1]+(b[1]-a[1])*t)+','+Math.round(a[2]+(b[2]-a[2])*t)+')'}}return'rgb(80,0,0)'}function tcol(v){return tcolN(Math.max(0,Math.min(1,(v-TMIN)/Math.max(.1,TMAX-TMIN))))}function range(a,minRange){let mn=Math.min(...a),mx=Math.max(...a),r=mx-mn,p=Math.max(1,r*.2);mn-=p;mx+=p;if(mx-mn<minRange){let m=(mx+mn)/2;mn=m-minRange/2;mx=m+minRange/2}return[mn,mx]}function drawOne(id,a,col,minRange,fixed){a=nums(a);const c=document.getElementById(id);if(!c)return;const x=c.getContext('2d'),w=c.width,H=c.height;x.clearRect(0,0,w,H);x.strokeStyle='#303a44';x.strokeRect(0,0,w,H);let mn=fixed?fixed[0]:0,mx=fixed?fixed[1]:0;if(a.length>=2&&!fixed){[mn,mx]=range(a,minRange)}x.fillStyle='#9aa7b2';x.font='12px Arial';x.fillText(String(mx),w-32,20);x.fillText(String(mn),w-32,H-12);if(a.length<2)return;x.strokeStyle='#ff3333';x.beginPath();x.moveTo(10,10);x.lineTo(w-38,10);x.moveTo(10,H-10);x.lineTo(w-38,H-10);x.stroke();x.lineWidth=2;let dMn=a.reduce((m,v)=>Math.min(m,v),a[0]),dMx=a.reduce((m,v)=>Math.max(m,v),a[0]),dRng=Math.max(.5,dMx-dMn);for(let i=1;i<a.length;i++){let p0=10+(i-1)*(w-48)/Math.max(1,a.length-1),p1=10+i*(w-48)/Math.max(1,a.length-1),v0=Math.max(mn,Math.min(mx,a[i-1])),v1=Math.max(mn,Math.min(mx,a[i]));x.beginPath();x.strokeStyle=fixed?tcolN(Math.max(0,Math.min(1,((a[i-1]+a[i])/2-dMn)/dRng))):col;x.moveTo(p0,10+(mx-v0)*(H-20)/(mx-mn));x.lineTo(p1,10+(mx-v1)*(H-20)/(mx-mn));x.stroke()}}function draw(){drawOne('tempChart',t,'#ff9d00',TMAX-TMIN,[TMIN,TMAX]);if(HAS_HUM)drawOne('humChart',h,'#a45bff',10)}async function upd(){try{let r=await fetch('/data',{cache:'no-store'}),d=await r.json();document.getElementById('temp').textContent=d.temp_text;document.getElementById('hum').textContent=d.hum_text;document.getElementById('tmin').textContent=d.temp_min_text;document.getElementById('tmax').textContent=d.temp_max_text;document.getElementById('hmin').textContent=d.humidity_min_text;document.getElementById('hmax').textContent=d.humidity_max_text;t=d.temp_history||[];h=d.humidity_history||[];draw()}catch(e){}}function addCursor(id,getData,isFixed){var cv=document.getElementById(id);if(!cv)return;var raf=null;function show(cx){if(raf)cancelAnimationFrame(raf);raf=requestAnimationFrame(function(){draw();var a=nums(getData());if(a.length<2)return;var ctx=cv.getContext('2d'),w=cv.width,H=cv.height,rect=cv.getBoundingClientRect(),cpx=(cx-rect.left)*w/rect.width,idx=Math.max(0,Math.min(a.length-1,Math.round((cpx-10)*(a.length-1)/Math.max(1,w-48)))),v=a[idx],px=10+idx*(w-48)/Math.max(1,a.length-1),mn=isFixed?TMIN:range(a,10)[0],mx=isFixed?TMAX:range(a,10)[1],py=10+(mx-Math.max(mn,Math.min(mx,v)))*(H-20)/(mx-mn);ctx.save();ctx.strokeStyle='rgba(255,255,255,.2)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(px,10);ctx.lineTo(px,H-10);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(px,py,5,0,Math.PI*2);ctx.fillStyle=isFixed?tcol(v):'#a45bff';ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();var lbl=v.toFixed(1),lx=Math.max(4,Math.min(w-50,px-18)),ly=py>35?py-10:py+22;ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(lx-3,ly-14,44,17);ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.fillText(lbl,lx,ly);ctx.restore();})}function hide(){if(raf)cancelAnimationFrame(raf);raf=null;draw();}cv.addEventListener('mousemove',function(e){show(e.clientX);});cv.addEventListener('mouseleave',hide);cv.addEventListener('touchstart',function(e){e.preventDefault();show(e.touches[0].clientX);},{passive:false});cv.addEventListener('touchmove',function(e){e.preventDefault();show(e.touches[0].clientX);},{passive:false});cv.addEventListener('touchend',hide);}addCursor('tempChart',function(){return t;},true);if(HAS_HUM)addCursor('humChart',function(){return h;},false);setInterval(upd,10000);upd();</script></div></body></html>");
   server.send(200, "text/html", page);
 }
 
@@ -2628,12 +2658,62 @@ void draw_config_view() {
   menu_bar();
 }
 
-const char kEditChars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -";
-constexpr uint8_t kEditCharsCount = 38;
+struct EditChar { const char *utf8; char lcd; };
+static const EditChar kEditChars[] = {
+  {"A",'A'},{"B",'B'},{"C",'C'},{"D",'D'},{"E",'E'},{"F",'F'},{"G",'G'},
+  {"H",'H'},{"I",'I'},{"J",'J'},{"K",'K'},{"L",'L'},{"M",'M'},{"N",'N'},
+  {"O",'O'},{"P",'P'},{"Q",'Q'},{"R",'R'},{"S",'S'},{"T",'T'},{"U",'U'},
+  {"V",'V'},{"W",'W'},{"X",'X'},{"Y",'Y'},{"Z",'Z'},
+  {"\xC3\x80",'A'},{"\xC3\x81",'A'},{"\xC3\x82",'A'},{"\xC3\x83",'A'},
+  {"\xC3\x87",'C'},
+  {"\xC3\x89",'E'},{"\xC3\x8A",'E'},
+  {"\xC3\x8D",'I'},
+  {"\xC3\x93",'O'},{"\xC3\x94",'O'},{"\xC3\x95",'O'},
+  {"\xC3\x9A",'U'},
+  {"0",'0'},{"1",'1'},{"2",'2'},{"3",'3'},{"4",'4'},
+  {"5",'5'},{"6",'6'},{"7",'7'},{"8",'8'},{"9",'9'},
+  {" ",' '},{"-",'-'},
+};
+constexpr uint8_t kEditCharsCount = 50;
 
-static int char_to_edit_idx(char c) {
+static int utf8_count(const String &s) {
+  int n = 0;
+  for (int i = 0; i < (int)s.length(); )
+    { n++; i += ((uint8_t)s[i] < 0x80) ? 1 : 2; }
+  return n;
+}
+static int utf8_byte_at(const String &s, int pos) {
+  int off = 0;
+  for (int i = 0; i < pos && off < (int)s.length(); i++)
+    off += ((uint8_t)s[off] < 0x80) ? 1 : 2;
+  return off;
+}
+static void utf8_remove(String &s, int pos) {
+  int off = utf8_byte_at(s, pos);
+  if (off < (int)s.length())
+    s.remove(off, ((uint8_t)s[off] < 0x80) ? 1 : 2);
+}
+static void utf8_replace_at(String &s, int pos, const char *ec) {
+  int off = utf8_byte_at(s, pos);
+  if (off >= (int)s.length()) return;
+  int old_len = ((uint8_t)s[off] < 0x80) ? 1 : 2;
+  s = s.substring(0, off) + String(ec) + s.substring(off + old_len);
+}
+static int utf8_edit_idx(const String &s, int pos) {
+  int off = utf8_byte_at(s, pos);
+  if (off >= (int)s.length()) return 0;
+  uint8_t c0 = (uint8_t)s[off];
+  int clen = (c0 < 0x80) ? 1 : 2;
   for (int i = 0; i < kEditCharsCount; i++) {
-    if (kEditChars[i] == c) return i;
+    if ((int)strlen(kEditChars[i].utf8) == clen &&
+        memcmp(kEditChars[i].utf8, s.c_str() + off, clen) == 0) return i;
+  }
+  return 0;
+}
+
+static int char_to_edit_idx(char c) {  // kept for compatibility (ASCII only)
+  for (int i = 0; i < kEditCharsCount; i++) {
+    if (kEditChars[i].utf8[0] == c) return i;
   }
   return 0;
 }
@@ -2644,19 +2724,32 @@ void draw_name_edit_view() {
 
   // --- Barra de nome: caractere do cursor destacado ---
   gfx->fillRect(6, 6, 308, 26, COLOR_DARK_BLUE);
-  int name_len = (int)editing_name.length();
-  for (int i = 0; i < name_len && i < 16; i++) {
-    int cx = 10 + i * 14;
-    if (i == edit_cursor) gfx->fillRect(cx - 1, 7, 13, 22, COLOR_FRAME);
-    char ch[2] = {editing_name[i], 0};
-    text(cx, 12, ch, COLOR_WHITE, 2);
+  int name_len = utf8_count(editing_name);
+  {
+    int off = 0, slot = 0;
+    while (off < (int)editing_name.length() && slot < 16) {
+      int cx = 10 + slot * 14;
+      uint8_t c0 = (uint8_t)editing_name[off];
+      int clen = (c0 < 0x80) ? 1 : 2;
+      char lcd = (c0 < 0x80) ? (char)c0
+               : (off + 1 < (int)editing_name.length() ? latin1_base((uint8_t)editing_name[off + 1]) : '?');
+      if (slot == edit_cursor) gfx->fillRect(cx - 1, 7, 13, 22, COLOR_FRAME);
+      char ch[2] = {lcd, 0};
+      text(cx, 12, ch, COLOR_WHITE, 2);
+      off += clen; slot++;
+    }
   }
 
   // --- Zona do caracter grande (y=36..110): toque esq=recua, dir=avanca ---
   gfx->fillRect(5, 36, 310, 74, 0x1082);
-  char cur = (edit_cursor < name_len) ? editing_name[edit_cursor] : ' ';
-  char big[2] = {cur == ' ' ? '_' : cur, 0};
-  text((SCREEN_W - 36) / 2, 46, big, COLOR_WHITE, 6);   // size 6 = 36x48 px
+  {
+    int cur_off = utf8_byte_at(editing_name, edit_cursor);
+    uint8_t c0 = (cur_off < (int)editing_name.length()) ? (uint8_t)editing_name[cur_off] : (uint8_t)' ';
+    char lcd_cur = (c0 < 0x80) ? (char)c0
+                 : (cur_off + 1 < (int)editing_name.length() ? latin1_base((uint8_t)editing_name[cur_off + 1]) : '?');
+    char big[2] = {lcd_cur == ' ' ? '_' : lcd_cur, 0};
+    text((SCREEN_W - 36) / 2, 46, big, COLOR_WHITE, 6);   // size 6 = 36x48 px
+  }
   text(14, 54, "<", COLOR_LIGHT_CYN, 4);
   text(282, 54, ">", COLOR_LIGHT_CYN, 4);
 
@@ -2850,7 +2943,7 @@ void handle_touch() {
   }
 
   if (view_mode == ViewMode::kNameEdit) {
-    int name_len = (int)editing_name.length();
+    int name_len = utf8_count(editing_name);
     if (y < 36) {
       // Barra do nome → cancela
       view_mode = ViewMode::kWifi;
@@ -2858,17 +2951,17 @@ void handle_touch() {
     } else if (y < 112) {
       // Zona do caracter grande: esq=recua, dir=avanca
       if (name_len > 0 && edit_cursor < name_len) {
-        int idx = char_to_edit_idx(editing_name[edit_cursor]);
+        int idx = utf8_edit_idx(editing_name, edit_cursor);
         idx = (x < 160) ? (idx - 1 + kEditCharsCount) % kEditCharsCount
                         : (idx + 1) % kEditCharsCount;
-        editing_name[edit_cursor] = kEditChars[idx];
+        utf8_replace_at(editing_name, edit_cursor, kEditChars[idx].utf8);
       }
     } else if (y < 150) {
       if (x < 84) {
         // DEL
         if (name_len > 1) {
-          editing_name.remove(edit_cursor, 1);
-          name_len = editing_name.length();
+          utf8_remove(editing_name, edit_cursor);
+          name_len = utf8_count(editing_name);
           if (edit_cursor >= name_len) edit_cursor = name_len - 1;
         } else {
           editing_name = "A";
