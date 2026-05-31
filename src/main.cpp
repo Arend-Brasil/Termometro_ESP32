@@ -72,7 +72,7 @@ constexpr const char *CLOUD_URL =
     "https://script.google.com/macros/s/AKfycbyNDa3mWvWCrRzgCJwfNmlzy40BkUpI0ZcFrS_tEVs6nWOOw4MvDXUIhbbzEUNAfZgP/exec";
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.30.05";
+constexpr const char *FIRMWARE_VERSION = "2026.05.31.01";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -783,7 +783,7 @@ void handle_root() {
   page += String(temperature_min_c, 1);
   page += F(",TMAX=");
   page += String(temperature_max_c, 1);
-  page += F(";let t=[],h=[];function nums(a){return(a||[]).filter(v=>typeof v==='number')}function tcol(v){if(v<=TMIN)return'#0050ff';if(v>=TMAX)return'#ff0000';let n=(v-TMIN)/Math.max(.1,TMAX-TMIN);if(n<.25)return'#00be5a';if(n<.5)return'#f5f5f5';if(n<.72)return'#ffe600';if(n<.9)return'#ff7d00';return'#ff0000'}function range(a,minRange){let mn=Math.min(...a),mx=Math.max(...a),r=mx-mn,p=Math.max(1,r*.2);mn-=p;mx+=p;if(mx-mn<minRange){let m=(mx+mn)/2;mn=m-minRange/2;mx=m+minRange/2}return[mn,mx]}function drawOne(id,a,col,minRange,fixed){a=nums(a);const c=document.getElementById(id);if(!c)return;const x=c.getContext('2d'),w=c.width,H=c.height;x.clearRect(0,0,w,H);x.strokeStyle='#303a44';x.strokeRect(0,0,w,H);let mn=fixed?fixed[0]:0,mx=fixed?fixed[1]:0;if(a.length>=2&&!fixed){[mn,mx]=range(a,minRange)}x.fillStyle='#9aa7b2';x.font='12px Arial';x.fillText(String(mx),w-32,20);x.fillText(String(mn),w-32,H-12);if(a.length<2)return;x.strokeStyle='#ff3333';x.beginPath();x.moveTo(10,10);x.lineTo(w-38,10);x.moveTo(10,H-10);x.lineTo(w-38,H-10);x.stroke();x.beginPath();x.strokeStyle=col;x.lineWidth=2;for(let i=0;i<a.length;i++){let v=Math.max(mn,Math.min(mx,a[i])),px=10+i*(w-48)/Math.max(1,a.length-1),py=10+(mx-v)*(H-20)/(mx-mn);i?x.lineTo(px,py):x.moveTo(px,py)}x.stroke();for(let i=0;i<a.length;i++){let v=Math.max(mn,Math.min(mx,a[i])),px=10+i*(w-48)/Math.max(1,a.length-1),py=10+(mx-v)*(H-20)/(mx-mn);x.fillStyle=fixed?tcol(a[i]):col;x.fillRect(px-2,py-2,4,4)}}function draw(){drawOne('tempChart',t,'#ff9d00',TMAX-TMIN,[TMIN,TMAX]);if(HAS_HUM)drawOne('humChart',h,'#a45bff',10)}async function upd(){try{let r=await fetch('/data',{cache:'no-store'}),d=await r.json();document.getElementById('temp').textContent=d.temp_text;document.getElementById('hum').textContent=d.hum_text;document.getElementById('tmin').textContent=d.temp_min_text;document.getElementById('tmax').textContent=d.temp_max_text;document.getElementById('hmin').textContent=d.humidity_min_text;document.getElementById('hmax').textContent=d.humidity_max_text;t=d.temp_history||[];h=d.humidity_history||[];draw()}catch(e){}}setInterval(upd,10000);upd();</script></div></body></html>");
+  page += F(";let t=[],h=[];function nums(a){return(a||[]).filter(v=>typeof v==='number')}const P=[[0,[0,0,130]],[.033,[0,0,200]],[.067,[0,30,255]],[.1,[0,80,255]],[.133,[0,140,255]],[.167,[0,200,255]],[.2,[0,240,230]],[.233,[0,255,180]],[.267,[0,255,120]],[.3,[30,255,60]],[.333,[80,255,30]],[.367,[140,255,20]],[.4,[200,255,60]],[.433,[230,255,130]],[.467,[245,255,200]],[.5,[245,245,245]],[.533,[255,255,180]],[.567,[255,255,80]],[.6,[255,250,0]],[.633,[255,230,0]],[.667,[255,200,0]],[.7,[255,170,0]],[.733,[255,130,0]],[.767,[255,90,0]],[.8,[255,50,0]],[.833,[255,20,0]],[.867,[255,0,0]],[.9,[220,0,0]],[.933,[170,0,0]],[.967,[120,0,0]],[1,[80,0,0]]];function tcol(v){let n=Math.max(0,Math.min(1,(v-TMIN)/Math.max(.1,TMAX-TMIN)));for(let i=1;i<P.length;i++){if(n<=P[i][0]){let t=(n-P[i-1][0])/(P[i][0]-P[i-1][0]),a=P[i-1][1],b=P[i][1];return'rgb('+Math.round(a[0]+(b[0]-a[0])*t)+','+Math.round(a[1]+(b[1]-a[1])*t)+','+Math.round(a[2]+(b[2]-a[2])*t)+')'}}return'rgb(80,0,0)'}function range(a,minRange){let mn=Math.min(...a),mx=Math.max(...a),r=mx-mn,p=Math.max(1,r*.2);mn-=p;mx+=p;if(mx-mn<minRange){let m=(mx+mn)/2;mn=m-minRange/2;mx=m+minRange/2}return[mn,mx]}function drawOne(id,a,col,minRange,fixed){a=nums(a);const c=document.getElementById(id);if(!c)return;const x=c.getContext('2d'),w=c.width,H=c.height;x.clearRect(0,0,w,H);x.strokeStyle='#303a44';x.strokeRect(0,0,w,H);let mn=fixed?fixed[0]:0,mx=fixed?fixed[1]:0;if(a.length>=2&&!fixed){[mn,mx]=range(a,minRange)}x.fillStyle='#9aa7b2';x.font='12px Arial';x.fillText(String(mx),w-32,20);x.fillText(String(mn),w-32,H-12);if(a.length<2)return;x.strokeStyle='#ff3333';x.beginPath();x.moveTo(10,10);x.lineTo(w-38,10);x.moveTo(10,H-10);x.lineTo(w-38,H-10);x.stroke();x.lineWidth=2;for(let i=1;i<a.length;i++){let p0=10+(i-1)*(w-48)/Math.max(1,a.length-1),p1=10+i*(w-48)/Math.max(1,a.length-1),v0=Math.max(mn,Math.min(mx,a[i-1])),v1=Math.max(mn,Math.min(mx,a[i]));x.beginPath();x.strokeStyle=fixed?tcol((a[i-1]+a[i])/2):col;x.moveTo(p0,10+(mx-v0)*(H-20)/(mx-mn));x.lineTo(p1,10+(mx-v1)*(H-20)/(mx-mn));x.stroke()}}function draw(){drawOne('tempChart',t,'#ff9d00',TMAX-TMIN,[TMIN,TMAX]);if(HAS_HUM)drawOne('humChart',h,'#a45bff',10)}async function upd(){try{let r=await fetch('/data',{cache:'no-store'}),d=await r.json();document.getElementById('temp').textContent=d.temp_text;document.getElementById('hum').textContent=d.hum_text;document.getElementById('tmin').textContent=d.temp_min_text;document.getElementById('tmax').textContent=d.temp_max_text;document.getElementById('hmin').textContent=d.humidity_min_text;document.getElementById('hmax').textContent=d.humidity_max_text;t=d.temp_history||[];h=d.humidity_history||[];draw()}catch(e){}}function addCursor(id,getData,isFixed){var cv=document.getElementById(id);if(!cv)return;var raf=null;function show(cx){if(raf)cancelAnimationFrame(raf);raf=requestAnimationFrame(function(){draw();var a=nums(getData());if(a.length<2)return;var ctx=cv.getContext('2d'),w=cv.width,H=cv.height,rect=cv.getBoundingClientRect(),cpx=(cx-rect.left)*w/rect.width,idx=Math.max(0,Math.min(a.length-1,Math.round((cpx-10)*(a.length-1)/Math.max(1,w-48)))),v=a[idx],px=10+idx*(w-48)/Math.max(1,a.length-1),mn=isFixed?TMIN:range(a,10)[0],mx=isFixed?TMAX:range(a,10)[1],py=10+(mx-Math.max(mn,Math.min(mx,v)))*(H-20)/(mx-mn);ctx.save();ctx.strokeStyle='rgba(255,255,255,.2)';ctx.lineWidth=1;ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(px,10);ctx.lineTo(px,H-10);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(px,py,5,0,Math.PI*2);ctx.fillStyle=isFixed?tcol(v):'#a45bff';ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();var lbl=v.toFixed(1),lx=Math.max(4,Math.min(w-50,px-18)),ly=py>35?py-10:py+22;ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(lx-3,ly-14,44,17);ctx.fillStyle='#fff';ctx.font='bold 13px Arial';ctx.fillText(lbl,lx,ly);ctx.restore();})}function hide(){if(raf)cancelAnimationFrame(raf);raf=null;draw();}cv.addEventListener('mousemove',function(e){show(e.clientX);});cv.addEventListener('mouseleave',hide);cv.addEventListener('touchstart',function(e){e.preventDefault();show(e.touches[0].clientX);},{passive:false});cv.addEventListener('touchmove',function(e){e.preventDefault();show(e.touches[0].clientX);},{passive:false});cv.addEventListener('touchend',hide);}addCursor('tempChart',function(){return t;},true);if(HAS_HUM)addCursor('humChart',function(){return h;},false);setInterval(upd,10000);upd();</script></div></body></html>");
   server.send(200, "text/html", page);
 }
 
@@ -2310,29 +2310,39 @@ uint16_t mix_color(uint8_t r1, uint8_t g1, uint8_t b1, uint8_t r2, uint8_t g2,
   return rgb565(r, g, b);
 }
 
-uint16_t graph_temperature_color(float value) {
-  if (value <= temperature_min_c) {
-    return rgb565(0, 80, 255);
-  }
-  if (value >= temperature_max_c) {
-    return rgb565(255, 0, 0);
-  }
+struct RgbStop { float n; uint8_t r, g, b; };
+static const RgbStop kPalette[] = {
+  {0.000f,   0,   0, 130}, {0.033f,   0,   0, 200},
+  {0.067f,   0,  30, 255}, {0.100f,   0,  80, 255},
+  {0.133f,   0, 140, 255}, {0.167f,   0, 200, 255},
+  {0.200f,   0, 240, 230}, {0.233f,   0, 255, 180},
+  {0.267f,   0, 255, 120}, {0.300f,  30, 255,  60},
+  {0.333f,  80, 255,  30}, {0.367f, 140, 255,  20},
+  {0.400f, 200, 255,  60}, {0.433f, 230, 255, 130},
+  {0.467f, 245, 255, 200}, {0.500f, 245, 245, 245},
+  {0.533f, 255, 255, 180}, {0.567f, 255, 255,  80},
+  {0.600f, 255, 250,   0}, {0.633f, 255, 230,   0},
+  {0.667f, 255, 200,   0}, {0.700f, 255, 170,   0},
+  {0.733f, 255, 130,   0}, {0.767f, 255,  90,   0},
+  {0.800f, 255,  50,   0}, {0.833f, 255,  20,   0},
+  {0.867f, 255,   0,   0}, {0.900f, 220,   0,   0},
+  {0.933f, 170,   0,   0}, {0.967f, 120,   0,   0},
+  {1.000f,  80,   0,   0},
+};
+constexpr uint8_t kPaletteSize = sizeof(kPalette) / sizeof(kPalette[0]);
 
-  float norm = (value - temperature_min_c) /
-               max(0.1f, temperature_max_c - temperature_min_c);
-  if (norm < 0.25f) {
-    return mix_color(0, 80, 255, 0, 190, 90, norm / 0.25f);
+uint16_t graph_temperature_color(float value) {
+  float range_v = max(0.1f, temperature_max_c - temperature_min_c);
+  float norm = constrain((value - temperature_min_c) / range_v, 0.0f, 1.0f);
+  for (uint8_t i = 1; i < kPaletteSize; i++) {
+    if (norm <= kPalette[i].n) {
+      float t = (norm - kPalette[i-1].n) / (kPalette[i].n - kPalette[i-1].n);
+      return mix_color(kPalette[i-1].r, kPalette[i-1].g, kPalette[i-1].b,
+                       kPalette[i].r,   kPalette[i].g,   kPalette[i].b, t);
+    }
   }
-  if (norm < 0.50f) {
-    return mix_color(0, 190, 90, 245, 245, 245, (norm - 0.25f) / 0.25f);
-  }
-  if (norm < 0.72f) {
-    return mix_color(245, 245, 245, 255, 230, 0, (norm - 0.50f) / 0.22f);
-  }
-  if (norm < 0.90f) {
-    return mix_color(255, 230, 0, 255, 125, 0, (norm - 0.72f) / 0.18f);
-  }
-  return mix_color(255, 125, 0, 255, 0, 0, (norm - 0.90f) / 0.10f);
+  return rgb565(kPalette[kPaletteSize-1].r, kPalette[kPaletteSize-1].g,
+                kPalette[kPaletteSize-1].b);
 }
 
 void draw_line_graph(int plot_x, int plot_y, int plot_w, int plot_h,
