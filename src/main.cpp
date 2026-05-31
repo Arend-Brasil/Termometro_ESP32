@@ -72,7 +72,7 @@ constexpr const char *CLOUD_URL =
     "https://script.google.com/macros/s/AKfycbyNDa3mWvWCrRzgCJwfNmlzy40BkUpI0ZcFrS_tEVs6nWOOw4MvDXUIhbbzEUNAfZgP/exec";
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.31.02";
+constexpr const char *FIRMWARE_VERSION = "2026.05.31.03";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -508,23 +508,6 @@ void centered_text_with_degree_c(int x, int y, int w, const char *value,
   text_with_degree_c(x + max(0, (w - text_w) / 2), y, value, color, size);
 }
 
-static char latin1_base(uint8_t c1) {
-  if (c1 >= 0x80 && c1 <= 0x86) return 'A';
-  if (c1 == 0x87) return 'C';
-  if (c1 >= 0x88 && c1 <= 0x8B) return 'E';
-  if (c1 >= 0x8C && c1 <= 0x8F) return 'I';
-  if (c1 == 0x91) return 'N';
-  if (c1 >= 0x92 && c1 <= 0x98) return 'O';
-  if (c1 >= 0x99 && c1 <= 0x9C) return 'U';
-  if (c1 == 0x9D) return 'Y';
-  if (c1 >= 0xA0 && c1 <= 0xA6) return 'a';
-  if (c1 == 0xA7) return 'c';
-  if (c1 >= 0xA8 && c1 <= 0xAB) return 'e';
-  if (c1 >= 0xAC && c1 <= 0xAF) return 'i';
-  if (c1 >= 0xB2 && c1 <= 0xB8) return 'o';
-  if (c1 >= 0xB9 && c1 <= 0xBC) return 'u';
-  return '?';
-}
 
 static String lcd_safe_str(const String &s) {
   String r;
@@ -532,7 +515,7 @@ static String lcd_safe_str(const String &s) {
   for (int i = 0; i < (int)s.length(); ) {
     uint8_t c0 = (uint8_t)s[i];
     if (c0 < 0x80) { r += (char)c0; i++; }
-    else if (c0 == 0xC3 && i + 1 < (int)s.length()) { r += latin1_base((uint8_t)s[i + 1]); i += 2; }
+    else if (c0 == 0xC3 && i + 1 < (int)s.length()) { r += (char)((uint8_t)s[i + 1] + 0x40); i += 2; }
     else { r += '?'; i++; }
   }
   return r;
@@ -2732,7 +2715,7 @@ void draw_name_edit_view() {
       uint8_t c0 = (uint8_t)editing_name[off];
       int clen = (c0 < 0x80) ? 1 : 2;
       char lcd = (c0 < 0x80) ? (char)c0
-               : (off + 1 < (int)editing_name.length() ? latin1_base((uint8_t)editing_name[off + 1]) : '?');
+               : (off + 1 < (int)editing_name.length() ? (char)((uint8_t)editing_name[off + 1] + 0x40) : '?');
       if (slot == edit_cursor) gfx->fillRect(cx - 1, 7, 13, 22, COLOR_FRAME);
       char ch[2] = {lcd, 0};
       text(cx, 12, ch, COLOR_WHITE, 2);
@@ -2746,7 +2729,7 @@ void draw_name_edit_view() {
     int cur_off = utf8_byte_at(editing_name, edit_cursor);
     uint8_t c0 = (cur_off < (int)editing_name.length()) ? (uint8_t)editing_name[cur_off] : (uint8_t)' ';
     char lcd_cur = (c0 < 0x80) ? (char)c0
-                 : (cur_off + 1 < (int)editing_name.length() ? latin1_base((uint8_t)editing_name[cur_off + 1]) : '?');
+                 : (cur_off + 1 < (int)editing_name.length() ? (char)((uint8_t)editing_name[cur_off + 1] + 0x40) : '?');
     char big[2] = {lcd_cur == ' ' ? '_' : lcd_cur, 0};
     text((SCREEN_W - 36) / 2, 46, big, COLOR_WHITE, 6);   // size 6 = 36x48 px
   }
