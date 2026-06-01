@@ -28,7 +28,8 @@ var DATA_HEADERS = [
   "cloud_status",
   "cloud_http",
   "queue_count",
-  "wifi_status"
+  "wifi_status",
+  "cloud_interval_s"
 ];
 
 function ensureSheetHeaders(sheet) {
@@ -65,6 +66,116 @@ function sampleAlreadyStored(sheet, sampleId) {
   return finder.findNext() !== null;
 }
 
+function configKey(deviceId, field) {
+  var safeDevice = String(deviceId || "").toUpperCase().replace(/[^A-Z0-9_]/g, "_");
+  return "cfg_" + safeDevice + "_" + field;
+}
+
+function getDeviceConfig(deviceId) {
+  deviceId = String(deviceId || "").trim();
+  if (!deviceId) {
+    return null;
+  }
+  var props = PropertiesService.getScriptProperties();
+  var limitMin = parseNumber(props.getProperty(configKey(deviceId, "limit_min")));
+  var limitMax = parseNumber(props.getProperty(configKey(deviceId, "limit_max")));
+  var interval = parseNumber(props.getProperty(configKey(deviceId, "cloud_interval_s")));
+  var configRev = parseNumber(props.getProperty(configKey(deviceId, "rev")));
+  var config = {};
+  var hasConfig = false;
+  if (limitMin !== null && limitMax !== null && limitMin < limitMax) {
+    config.limit_min = limitMin;
+    config.limit_max = limitMax;
+    hasConfig = true;
+  }
+  if (interval !== null) {
+    interval = Math.min(Math.max(Math.round(interval), 60), 3600);
+    config.cloud_interval_s = interval;
+    hasConfig = true;
+  }
+  if (configRev !== null) {
+    config.config_rev = Math.max(0, Math.round(configRev));
+  }
+  return hasConfig ? config : null;
+}
+
+function bumpDeviceConfigRev(props, deviceId) {
+  var key = configKey(deviceId, "rev");
+  var rev = parseNumber(props.getProperty(key));
+  rev = rev === null ? 1 : Math.max(1, Math.round(rev) + 1);
+  props.setProperty(key, String(rev));
+  return rev;
+}
+
+function writeDeviceConfig(params) {
+  if (params.token !== TOKEN) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: "token" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var deviceId = String(params.device_id || "").trim();
+  if (!deviceId) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: "device_id" }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  var props = PropertiesService.getScriptProperties();
+  var changed = false;
+  var limitMin = parseNumber(params.limit_min);
+  var limitMax = parseNumber(params.limit_max);
+  if (limitMin !== null && limitMax !== null && limitMin < limitMax) {
+    props.setProperty(configKey(deviceId, "limit_min"), String(limitMin));
+    props.setProperty(configKey(deviceId, "limit_max"), String(limitMax));
+    changed = true;
+  }
+  var interval = parseNumber(params.cloud_interval_s);
+  if (interval !== null) {
+    interval = Math.min(Math.max(Math.round(interval), 60), 3600);
+    props.setProperty(configKey(deviceId, "cloud_interval_s"), String(interval));
+    changed = true;
+  }
+  if (changed) {
+    bumpDeviceConfigRev(props, deviceId);
+  }
+  return ContentService
+    .createTextOutput(JSON.stringify({
+      ok: true,
+      device_id: deviceId,
+      config: getDeviceConfig(deviceId)
+    }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function saveDeviceConfigUi(data) {
+  data = data || {};
+  var deviceId = String(data.device_id || "").trim();
+  if (!deviceId) {
+    return { ok: false, error: "device_id" };
+  }
+  var props = PropertiesService.getScriptProperties();
+  var limitMin = parseNumber(data.limit_min);
+  var limitMax = parseNumber(data.limit_max);
+  if (limitMin === null || limitMax === null || limitMin >= limitMax) {
+    return { ok: false, error: "limits" };
+  }
+  props.setProperty(configKey(deviceId, "limit_min"), String(limitMin));
+  props.setProperty(configKey(deviceId, "limit_max"), String(limitMax));
+
+  var interval = parseNumber(data.cloud_interval_s);
+  if (interval === null) {
+    return { ok: false, error: "interval" };
+  }
+  interval = Math.min(Math.max(Math.round(interval), 60), 3600);
+  props.setProperty(configKey(deviceId, "cloud_interval_s"), String(interval));
+  bumpDeviceConfigRev(props, deviceId);
+
+  return {
+    ok: true,
+    device_id: deviceId,
+    config: getDeviceConfig(deviceId)
+  };
+}
+
 function appendData(data) {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   spreadsheet.setSpreadsheetTimeZone(TIME_ZONE);
@@ -72,9 +183,10 @@ function appendData(data) {
   ensureSheetHeaders(sheet);
   var ok = data.token === TOKEN;
   var sampleId = String(data.sample_id || "").trim();
+  var config = ok ? getDeviceConfig(data.device_id) : null;
   if (ok && sampleAlreadyStored(sheet, sampleId)) {
     return ContentService
-      .createTextOutput(JSON.stringify({ ok: ok, duplicate: true }))
+      .createTextOutput(JSON.stringify({ ok: ok, duplicate: true, config: config }))
       .setMimeType(ContentService.MimeType.JSON);
   }
   var measuredAt = sampleTimestamp(data);
@@ -100,7 +212,8 @@ function appendData(data) {
     data.cloud_status || "",
     data.cloud_http || "",
     data.queue_count || "",
-    data.wifi_status || ""
+    data.wifi_status || "",
+    data.cloud_interval_s || ""
   ]);
 
   var sampleAgeSeconds = parseNumber(data.idade_s);
@@ -110,7 +223,7 @@ function appendData(data) {
   }
 
   return ContentService
-    .createTextOutput(JSON.stringify({ ok: ok }))
+    .createTextOutput(JSON.stringify({ ok: ok, config: config }))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
@@ -331,8 +444,16 @@ function readData(params) {
   var cutoff = periodCutoff(String(params.period || "day"));
   var deviceFilter = String(params.device_id || "").trim();
   var rows = [];
+  var configCache = {};
 
-  for (var i = 1; i < values.length; i++) {
+  function cachedConfig(deviceId) {
+    if (!configCache.hasOwnProperty(deviceId)) {
+      configCache[deviceId] = getDeviceConfig(deviceId);
+    }
+    return configCache[deviceId];
+  }
+
+  for (var i = values.length - 1; i >= 1; i--) {
     var row = values[i];
     var deviceId = String(row[1] || "");
     if (deviceFilter && deviceId !== deviceFilter) {
@@ -340,12 +461,30 @@ function readData(params) {
     }
     var timestamp = row[0] instanceof Date ? row[0] : null;
     if (cutoff !== null && (!timestamp || timestamp.getTime() < cutoff)) {
-      continue;
+      break;
     }
     var temperatura = parseNumber(row[2]);
     var umidade = parseNumber(row[3]);
     var tensao = parseNumber(row[4]);
     var rssi = parseNumber(row[5]);
+    var limitMin = parseNumber(row[9]);
+    var limitMax = parseNumber(row[10]);
+    var interval = parseNumber(row[21]);
+    var savedConfig = cachedConfig(deviceId);
+    if (savedConfig) {
+      if (typeof savedConfig.limit_min === "number" &&
+          typeof savedConfig.limit_max === "number") {
+        limitMin = savedConfig.limit_min;
+        limitMax = savedConfig.limit_max;
+      }
+      if (typeof savedConfig.cloud_interval_s === "number") {
+        interval = savedConfig.cloud_interval_s;
+      }
+    }
+    if (limitMin === null || limitMax === null || limitMin >= limitMax) {
+      limitMin = null;
+      limitMax = null;
+    }
     rows.push({
       timestamp: timestamp ? timestamp.toISOString() : String(row[0] || ""),
       timestamp_text: timestamp ? Utilities.formatDate(timestamp, TIME_ZONE, "dd/MM/yyyy HH:mm:ss") : String(row[0] || ""),
@@ -357,16 +496,20 @@ function readData(params) {
       token_ok: String(row[6] || ""),
       firmware_version: String(row[7] || ""),
       history_count: parseNumber(row[8]),
-      limit_min: parseNumber(row[9]),
-      limit_max: parseNumber(row[10]),
+      limit_min: limitMin,
+      limit_max: limitMax,
       uptime_s: parseNumber(row[11]),
       reset_reason: String(row[15] || ""),
       boot_count: parseNumber(row[16]),
       cloud_status: String(row[17] || ""),
       cloud_http: parseNumber(row[18]),
       queue_count: parseNumber(row[19]),
-      wifi_status: String(row[20] || "")
+      wifi_status: String(row[20] || ""),
+      cloud_interval_s: interval
     });
+    if (cutoff === null && rows.length >= maxPoints * 3) {
+      break;
+    }
   }
 
   rows.sort(function(a, b) {
@@ -383,7 +526,7 @@ function dashboardHtml() {
   var html = "";
   html += "<!doctype html><html><head>";
   html += "<meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>";
-  html += "<title>Barrac&atilde;o</title>";
+  html += "<title>Term&ocirc;metro DWL</title>";
   html += "<style>";
   html += "body{margin:0;background:#101418;color:#f6f7f9;font-family:Arial,sans-serif;overflow-x:hidden}";
   html += "*{box-sizing:border-box}.wrap{max-width:920px;margin:0 auto;padding:18px}";
@@ -395,11 +538,16 @@ function dashboardHtml() {
   html += ".sub{margin-top:8px;color:#cdd6df}.min{color:#4a90ff;font-weight:700}.max{color:#ff3333;font-weight:700}";
   html += ".chartTitle{margin:18px 0 8px;color:#cdd6df}canvas{display:block;width:100%;height:230px;background:#12181e;border:1px solid #303a44;touch-action:none}";
   html += ".controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.rangeInfo{margin-top:10px;color:#9aa7b2;font-size:13px;overflow-wrap:anywhere}.tip{position:fixed;display:none;background:#f6f7f9;color:#101418;padding:8px 10px;border:1px solid #303a44;font-size:13px;line-height:1.35;pointer-events:none;z-index:5;max-width:calc(100vw - 18px);box-shadow:0 4px 14px rgba(0,0,0,.35)}";
+  html += ".configBar{display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:8px;margin:12px 0;padding:12px;border:1px solid #303a44;background:#182028}.configBar label{font-size:12px;color:#cdd6df}.configBar input{display:block;width:100%;margin-top:5px;background:#f6f7f9;color:#101418;border:0;padding:9px;font-size:15px}.configBar button{align-self:end}.saveInfo{grid-column:1/-1;color:#9aa7b2;font-size:13px;min-height:18px}";
+  html += ".summary{margin:12px 0;border:1px solid #303a44;background:#182028;overflow-x:auto}.summary table{width:100%;border-collapse:collapse}.summary th,.summary td{padding:9px 10px;border-bottom:1px solid #303a44;text-align:left;white-space:nowrap}.summary th{font-size:12px;color:#cdd6df;font-weight:700}.summary td{font-size:14px}.summary tr{cursor:pointer}.summary tr:hover{background:#22303a}.stateOk{color:#79e28a;font-weight:700}.stateLow{color:#4a90ff;font-weight:700}.stateHigh{color:#ff6a4a;font-weight:700}.stateNone{color:#9aa7b2}";
   html += "select,button{background:#f6f7f9;color:#101418;border:0;padding:9px;font-size:15px;max-width:100%}";
   html += "@media(max-width:650px){.wrap{padding:10px}.grid{grid-template-columns:1fr}.value{font-size:38px}header{align-items:stretch;flex-direction:column}.controls{justify-content:stretch}.controls select,.controls button{flex:1 1 140px}.tip{font-size:14px}}";
+  html += "@media(max-width:650px){.configBar{grid-template-columns:1fr 1fr}.configBar button{grid-column:1/-1}}";
   html += "</style></head><body><div class='wrap'>";
-  html += "<header><div><h1>Barrac&atilde;o</h1><div id='stamp' class='muted'>Carregando dados...</div></div>";
+  html += "<header><div><h1>Term&ocirc;metro DWL</h1><div id='stamp' class='muted'>Carregando dados...</div></div>";
   html += "<div class='controls'><select id='period'><option value='hour'>Ultima hora</option><option value='day' selected>Ultimo dia</option><option value='week'>Ultima semana</option><option value='month'>Ultimo mes</option><option value='year'>Ultimo ano</option><option value='all'>Tudo</option></select><select id='device'></select><button onclick='loadData()'>Atualizar</button></div></header>";
+  html += "<div class='configBar'><label>Min C<input id='cfgMin' type='number' step='0.5'></label><label>Max C<input id='cfgMax' type='number' step='0.5'></label><label>Envio s<input id='cfgInterval' type='number' min='60' max='3600' step='60'></label><button id='saveCfg' onclick='saveConfig()'>Salvar</button><div id='saveInfo' class='saveInfo'></div></div>";
+  html += "<div class='summary'><table><thead><tr><th>Termometro</th><th>Temperatura</th><th>Status</th><th>Ultima leitura</th><th>Limites</th></tr></thead><tbody id='deviceRows'></tbody></table></div>";
   html += "<div class='grid'>";
   html += "<section class='card'><div class='label'>TEMPERATURA</div><div id='temp' class='value'>--.- C</div>";
   html += "<div class='sub'><span class='min'>MIN</span> <span id='tmin'>--.- C</span> &nbsp; <span class='max'>MAX</span> <span id='tmax'>--.- C</span></div></section>";
@@ -426,9 +574,14 @@ function dashboardHtml() {
   html += "function chartCursor(ev,id){if(ev.cancelable)ev.preventDefault();var c=document.getElementById(id),s=CHARTS[id];if(!s||!s.series||!s.series.length)return;var rect=c.getBoundingClientRect();var t=ev.touches?ev.touches[0]:ev;var ratio=(t.clientX-rect.left)/rect.width;var idx=Math.round(ratio*(s.series.length-1));idx=Math.max(0,Math.min(s.series.length-1,idx));draw(id,s.series,s.color,0,s.label,s.suffix);markPoint(id,idx);showTip(t.clientX,t.clientY,s,s.series[idx]);}";
   html += "function hideTip(){document.getElementById('tip').style.display='none';Object.keys(CHARTS).forEach(function(id){var s=CHARTS[id];if(s){s.selected=null;draw(id,s.series,s.color,0,s.label,s.suffix);}});}";
   html += "function updateDeviceSelect(rows){var devices=[];rows.forEach(function(r){if(r.device_id&&devices.indexOf(r.device_id)<0)devices.push(r.device_id);});var sel=document.getElementById('device');var previous=currentDevice||sel.value;sel.innerHTML='<option value=\"\">Todos</option>'+devices.map(function(d){return '<option>'+d+'</option>';}).join('');sel.value=devices.indexOf(previous)>=0?previous:'';currentDevice=sel.value;sel.onchange=function(){currentDevice=sel.value;loadData();};}";
-  html += "function diagText(last){if(!last)return'';var parts=[];if(last.firmware_version)parts.push('firmware '+last.firmware_version);if(Number.isFinite(last.boot_count))parts.push('boot '+last.boot_count);if(last.reset_reason)parts.push('reset '+last.reset_reason);if(Number.isFinite(last.cloud_http))parts.push('cloud HTTP '+last.cloud_http);if(last.cloud_status)parts.push('cloud '+last.cloud_status);if(Number.isFinite(last.queue_count))parts.push('fila '+last.queue_count);if(last.wifi_status)parts.push('wifi '+last.wifi_status);if(Number.isFinite(last.history_count))parts.push('historico local '+last.history_count+' pontos');if(Number.isFinite(last.limit_min)&&Number.isFinite(last.limit_max))parts.push('limites '+last.limit_min.toFixed(1)+' a '+last.limit_max.toFixed(1)+' C');if(Number.isFinite(last.uptime_s))parts.push('ligado ha '+Math.floor(last.uptime_s/60)+' min');return parts.join(' | ');}";
-  html += "function loadData(){var period=document.getElementById('period').value;var url=WEB_APP_URL+'?api=data&period='+encodeURIComponent(period)+'&max_points=1200'+(currentDevice?'&device_id='+encodeURIComponent(currentDevice):'');fetch(url).then(function(res){return res.json();}).then(function(data){var rows=validRows(data.rows||[]);updateDeviceSelect(rows);var filtered=currentDevice?rows.filter(function(r){return r.device_id===currentDevice;}):rows;var tempSeries=validSeries(filtered,'temperatura',-40,85);var humSeries=validSeries(filtered,'umidade',0,100);var temps=tempSeries.map(function(p){return p.value;});var hums=humSeries.map(function(p){return p.value;});var statTemps=currentStatsSeries(tempSeries).map(function(p){return p.value;});var statHums=currentStatsSeries(humSeries).map(function(p){return p.value;});var last=filtered[filtered.length-1];document.getElementById('temp').textContent=fmt(temps[temps.length-1],' C',1);document.getElementById('hum').textContent=fmt(hums[hums.length-1],'%',1);document.getElementById('tmin').textContent=statTemps.length?fmt(Math.min.apply(null,statTemps),' C',1):'--.- C';document.getElementById('tmax').textContent=statTemps.length?fmt(Math.max.apply(null,statTemps),' C',1):'--.- C';document.getElementById('hmin').textContent=statHums.length?fmt(Math.min.apply(null,statHums),'%',1):'--.-%';document.getElementById('hmax').textContent=statHums.length?fmt(Math.max.apply(null,statHums),'%',1):'--.-%';document.getElementById('stamp').textContent=last?(last.timestamp_text||new Date(last.timestamp).toLocaleString()):'Sem dados';document.getElementById('diagInfo').textContent=diagText(last);document.getElementById('periodInfo').textContent=filtered.length?(document.getElementById('period').selectedOptions[0].text+' | '+filtered.length+' pontos | '+filtered[0].timestamp_text+' ate '+filtered[filtered.length-1].timestamp_text+' | min/max desde '+(new Date().getHours()<12?'00:00':'12:00')):'Sem dados neste periodo';draw('tempChart',tempSeries,'#ff9d00',4,'Temperatura',' C');draw('humChart',humSeries,'#a45bff',10,'Umidade','%');}).catch(function(err){document.getElementById('stamp').textContent='Erro ao carregar dados: '+err;});}";
-  html += "document.getElementById('period').onchange=loadData;['tempChart','humChart'].forEach(function(id){var c=document.getElementById(id);c.addEventListener('mousemove',function(e){chartCursor(e,id);});c.addEventListener('click',function(e){chartCursor(e,id);});c.addEventListener('touchstart',function(e){chartCursor(e,id);},{passive:false});c.addEventListener('touchmove',function(e){chartCursor(e,id);},{passive:false});c.addEventListener('mouseleave',hideTip);});loadData();setInterval(loadData,60000);";
+  html += "function esc(s){return String(s||'').replace(/[&<>\"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[c];});}";
+  html += "function validLimits(mn,mx){return Number.isFinite(mn)&&Number.isFinite(mx)&&mn<mx;}";
+  html += "function renderSummary(rows){var latest={};rows.forEach(function(r){if(!r.device_id)return;var t=new Date(r.timestamp).getTime()||0;if(!latest[r.device_id]||t>(new Date(latest[r.device_id].timestamp).getTime()||0))latest[r.device_id]=r;});var names=Object.keys(latest).sort();document.getElementById('deviceRows').innerHTML=names.map(function(d){var r=latest[d],temp=Number(r.temperatura),mn=Number(r.limit_min),mx=Number(r.limit_max),st='SEM',cls='stateNone',okLim=validLimits(mn,mx);if(Number.isFinite(temp)&&okLim){if(temp<mn){st='BAIXA';cls='stateLow';}else if(temp>mx){st='ALTA';cls='stateHigh';}else{st='OK';cls='stateOk';}}return'<tr data-dev=\"'+encodeURIComponent(d)+'\"><td>'+esc(d)+'</td><td>'+fmt(temp,' C',1)+'</td><td class=\"'+cls+'\">'+st+'</td><td>'+esc(r.timestamp_text||'')+'</td><td>'+(okLim?mn.toFixed(1)+' a '+mx.toFixed(1)+' C':'--')+'</td></tr>';}).join('')||'<tr><td colspan=\"5\" class=\"stateNone\">Sem termometros neste periodo</td></tr>';}";
+  html += "function updateConfigFields(last){var info=document.getElementById('saveInfo');document.getElementById('saveCfg').disabled=!currentDevice;if(!currentDevice){info.textContent='Selecione um termometro para editar.';return;}var mn=last?Number(last.limit_min):NaN,mx=last?Number(last.limit_max):NaN;if(validLimits(mn,mx)){document.getElementById('cfgMin').value=mn.toFixed(1);document.getElementById('cfgMax').value=mx.toFixed(1);}if(last&&Number.isFinite(last.cloud_interval_s))document.getElementById('cfgInterval').value=last.cloud_interval_s;info.textContent='Configuracao sera aplicada no proximo envio do termometro.';}";
+  html += "function saveConfig(){var info=document.getElementById('saveInfo');if(!currentDevice){info.textContent='Selecione um termometro.';return;}var payload={device_id:currentDevice,limit_min:document.getElementById('cfgMin').value,limit_max:document.getElementById('cfgMax').value,cloud_interval_s:document.getElementById('cfgInterval').value};info.textContent='Salvando...';google.script.run.withSuccessHandler(function(res){if(res&&res.ok){info.textContent='Salvo. O termometro aplica no proximo envio.';loadData();}else{info.textContent='Erro ao salvar configuracao.';}}).withFailureHandler(function(err){info.textContent='Erro: '+err;}).saveDeviceConfigUi(payload);}";
+  html += "function diagText(last){if(!last)return'';var parts=[];if(last.firmware_version)parts.push('firmware '+last.firmware_version);if(Number.isFinite(last.boot_count))parts.push('boot '+last.boot_count);if(last.reset_reason)parts.push('reset '+last.reset_reason);if(Number.isFinite(last.cloud_http))parts.push('cloud HTTP '+last.cloud_http);if(last.cloud_status)parts.push('cloud '+last.cloud_status);if(Number.isFinite(last.queue_count))parts.push('fila '+last.queue_count);if(last.wifi_status)parts.push('wifi '+last.wifi_status);if(Number.isFinite(last.cloud_interval_s))parts.push('envio '+last.cloud_interval_s+' s');if(Number.isFinite(last.history_count))parts.push('historico local '+last.history_count+' pontos');if(validLimits(Number(last.limit_min),Number(last.limit_max)))parts.push('limites '+Number(last.limit_min).toFixed(1)+' a '+Number(last.limit_max).toFixed(1)+' C');if(Number.isFinite(last.uptime_s))parts.push('ligado ha '+Math.floor(last.uptime_s/60)+' min');return parts.join(' | ');}";
+  html += "function loadData(){var period=document.getElementById('period').value;var url=WEB_APP_URL+'?api=data&period='+encodeURIComponent(period)+'&max_points=1200';fetch(url).then(function(res){return res.json();}).then(function(data){var rows=validRows(data.rows||[]);updateDeviceSelect(rows);renderSummary(rows);var filtered=currentDevice?rows.filter(function(r){return r.device_id===currentDevice;}):rows;var tempSeries=validSeries(filtered,'temperatura',-40,85);var humSeries=validSeries(filtered,'umidade',0,100);var temps=tempSeries.map(function(p){return p.value;});var hums=humSeries.map(function(p){return p.value;});var statTemps=currentStatsSeries(tempSeries).map(function(p){return p.value;});var statHums=currentStatsSeries(humSeries).map(function(p){return p.value;});var last=filtered[filtered.length-1];updateConfigFields(last);document.getElementById('temp').textContent=fmt(temps[temps.length-1],' C',1);document.getElementById('hum').textContent=fmt(hums[hums.length-1],'%',1);document.getElementById('tmin').textContent=statTemps.length?fmt(Math.min.apply(null,statTemps),' C',1):'--.- C';document.getElementById('tmax').textContent=statTemps.length?fmt(Math.max.apply(null,statTemps),' C',1):'--.- C';document.getElementById('hmin').textContent=statHums.length?fmt(Math.min.apply(null,statHums),'%',1):'--.-%';document.getElementById('hmax').textContent=statHums.length?fmt(Math.max.apply(null,statHums),'%',1):'--.-%';document.getElementById('stamp').textContent=last?(last.timestamp_text||new Date(last.timestamp).toLocaleString()):'Sem dados';document.getElementById('diagInfo').textContent=diagText(last);document.getElementById('periodInfo').textContent=filtered.length?(document.getElementById('period').selectedOptions[0].text+' | '+filtered.length+' pontos | '+filtered[0].timestamp_text+' ate '+filtered[filtered.length-1].timestamp_text+' | min/max desde '+(new Date().getHours()<12?'00:00':'12:00')):'Sem dados neste periodo';draw('tempChart',tempSeries,'#ff9d00',4,'Temperatura',' C');draw('humChart',humSeries,'#a45bff',10,'Umidade','%');}).catch(function(err){document.getElementById('stamp').textContent='Erro ao carregar dados: '+err;});}";
+  html += "document.getElementById('period').onchange=loadData;document.getElementById('deviceRows').onclick=function(e){var tr=e.target.closest('tr[data-dev]');if(!tr)return;currentDevice=decodeURIComponent(tr.getAttribute('data-dev'));document.getElementById('device').value=currentDevice;loadData();};['tempChart','humChart'].forEach(function(id){var c=document.getElementById(id);c.addEventListener('mousemove',function(e){chartCursor(e,id);});c.addEventListener('click',function(e){chartCursor(e,id);});c.addEventListener('touchstart',function(e){chartCursor(e,id);},{passive:false});c.addEventListener('touchmove',function(e){chartCursor(e,id);},{passive:false});c.addEventListener('mouseleave',hideTip);});loadData();setInterval(loadData,60000);";
   html += "</script></body></html>";
   return html;
 }
@@ -450,11 +603,14 @@ function doGet(e) {
   if (params.api === "data") {
     return readData(params);
   }
+  if (params.api === "set_config") {
+    return writeDeviceConfig(params);
+  }
   if (params.token) {
     return appendData(params);
   }
   return HtmlService.createHtmlOutput(dashboardHtml())
-    .setTitle("Barracao")
+    .setTitle("Termometro DWL")
     .addMetaTag("viewport", "width=device-width,initial-scale=1");
 }
 

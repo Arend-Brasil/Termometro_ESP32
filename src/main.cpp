@@ -46,10 +46,19 @@ constexpr float LIMIT_ABSOLUTE_MIN_C = -40.0f;
 constexpr float LIMIT_ABSOLUTE_MAX_C = 80.0f;
 constexpr uint32_t STATS_RESET_MS = 12UL * 60UL * 60UL * 1000UL;
 constexpr uint32_t HISTORY_SAMPLE_MS = 60UL * 1000UL;
-constexpr uint32_t CLOUD_SEND_MS = 60UL * 1000UL;
+constexpr uint32_t DEFAULT_CLOUD_SEND_INTERVAL_MS = 60UL * 1000UL;
+constexpr uint32_t MIN_CLOUD_SEND_INTERVAL_MS = 60UL * 1000UL;
+constexpr uint32_t MAX_CLOUD_SEND_INTERVAL_MS = 60UL * 60UL * 1000UL;
+constexpr uint32_t DEFAULT_CLOUD_SEND_INTERVAL_S =
+    DEFAULT_CLOUD_SEND_INTERVAL_MS / 1000UL;
+constexpr uint32_t MIN_CLOUD_SEND_INTERVAL_S =
+    MIN_CLOUD_SEND_INTERVAL_MS / 1000UL;
+constexpr uint32_t MAX_CLOUD_SEND_INTERVAL_S =
+    MAX_CLOUD_SEND_INTERVAL_MS / 1000UL;
 constexpr uint64_t BATTERY_SAMPLE_SLEEP_US = 5ULL * 60ULL * 1000ULL * 1000ULL;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 3500;
 constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 8000;
+constexpr bool CLOUD_CONFIG_APPLY_ENABLED = true;
 constexpr uint32_t INTRO_TIMEOUT_MS = 5000;
 constexpr uint32_t OTA_CONFIRM_MS = 30UL * 1000UL;
 constexpr uint32_t OTA_ROLLBACK_MS = 5UL * 60UL * 1000UL;
@@ -72,7 +81,7 @@ constexpr const char *CLOUD_URL =
     "https://script.google.com/macros/s/AKfycbyNDa3mWvWCrRzgCJwfNmlzy40BkUpI0ZcFrS_tEVs6nWOOw4MvDXUIhbbzEUNAfZgP/exec";
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.05.31.06";
+constexpr const char *FIRMWARE_VERSION = "2026.06.01.01";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
@@ -133,7 +142,7 @@ String last_cloud_status = "boot";
 bool external_power_present = true;
 float battery_voltage_v = NAN;
 
-String device_name = "BARRACAO";
+String device_name = "Termometro-1";
 String editing_name = "";
 int8_t edit_cursor = 0;
 
@@ -168,6 +177,8 @@ float daily_max_humidity_pct = NAN;
 uint32_t daily_window_start_ms = 0;
 uint32_t last_history_sample_ms = 0;
 uint32_t last_cloud_send_ms = 0;
+uint32_t cloud_send_interval_ms = DEFAULT_CLOUD_SEND_INTERVAL_MS;
+uint32_t cloud_config_rev_applied = 0;
 uint32_t last_sht_detect_ms = 0;
 uint32_t last_serial_log_ms = 0;
 float last_temp_c = NAN;
@@ -212,6 +223,11 @@ void load_history_from_nvs();
 void load_temperature_limits();
 void save_temperature_limits(float min_c, float max_c);
 void adjust_temperature_limit(bool adjust_min, float delta_c);
+void load_cloud_send_interval();
+void save_cloud_send_interval_seconds(uint32_t seconds);
+void load_cloud_config_rev();
+void save_cloud_config_rev(uint32_t rev);
+void apply_cloud_config_response(const String &body);
 bool check_remote_ota(bool manual);
 void handle_remote_ota();
 void handle_restart();
@@ -625,22 +641,28 @@ const char *reset_reason_name(esp_reset_reason_t reason) {
       return "BROWNOUT";
     case ESP_RST_SDIO:
       return "SDIO";
-    default:
+    case ESP_RST_USB:
+      return "USB";
+    case ESP_RST_UNKNOWN:
       return "UNKNOWN";
+    default:
+      return "UNMAPPED";
   }
 }
 
 void init_diagnostics() {
-  reset_reason_text = reset_reason_name(esp_reset_reason());
+  esp_reset_reason_t reason = esp_reset_reason();
+  reset_reason_text = reset_reason_name(reason);
   prefs.begin("diag", false);
   boot_count = prefs.getUInt("boots", 0) + 1;
   prefs.putUInt("boots", boot_count);
   last_cloud_http_code = prefs.getInt("cloud_code", 0);
   last_cloud_status = prefs.getString("cloud_status", "boot");
   prefs.end();
-  Serial.printf("Diag: reset=%s boot=%lu ultimo_cloud=%d %s\n",
-                reset_reason_text.c_str(), static_cast<unsigned long>(boot_count),
-                last_cloud_http_code, last_cloud_status.c_str());
+  Serial.printf("Diag: reset=%s(%d) boot=%lu ultimo_cloud=%d %s\n",
+                reset_reason_text.c_str(), static_cast<int>(reason),
+                static_cast<unsigned long>(boot_count), last_cloud_http_code,
+                last_cloud_status.c_str());
 }
 
 void init_power_monitor() {
@@ -927,6 +949,8 @@ void handle_data() {
   data += json_escape(last_cloud_status);
   data += F("\",\"cloud_queue\":");
   data += String(cloud_queue_count);
+  data += F(",\"cloud_interval_s\":");
+  data += String(cloud_send_interval_ms / 1000UL);
   data += F(",\"battery_v\":");
   data += isnan(battery_voltage_v) ? String("null") : String(battery_voltage_v, 2);
   data += F(",\"external_power\":");
@@ -979,6 +1003,8 @@ void handle_version() {
   data += json_escape(last_cloud_status);
   data += F("\",\"cloud_queue\":");
   data += String(cloud_queue_count);
+  data += F(",\"cloud_interval_s\":");
+  data += String(cloud_send_interval_ms / 1000UL);
   data += F(",\"battery_v\":");
   data += isnan(battery_voltage_v) ? String("null") : String(battery_voltage_v, 2);
   data += F(",\"external_power\":");
@@ -1058,15 +1084,15 @@ void load_sensor_mode() {
 
 void load_device_name() {
   prefs.begin("system", true);
-  device_name = prefs.getString("devname", "BARRACAO");
+  device_name = prefs.getString("devname", "Termometro-1");
   prefs.end();
   device_name.trim();
-  if (device_name.length() == 0) device_name = "BARRACAO";
+  if (device_name.length() == 0) device_name = "Termometro-1";
   Serial.printf("Nome do dispositivo: %s\n", device_name.c_str());
 }
 
 void save_device_name(const String &name) {
-  device_name = name.length() > 0 ? name : String("BARRACAO");
+  device_name = name.length() > 0 ? name : String("Termometro-1");
   prefs.begin("system", false);
   prefs.putString("devname", device_name);
   prefs.end();
@@ -1132,6 +1158,53 @@ void adjust_temperature_limit(bool adjust_min, float delta_c) {
     max_c += delta_c;
   }
   save_temperature_limits(min_c, max_c);
+}
+
+void load_cloud_send_interval() {
+  prefs.begin("system", true);
+  uint32_t seconds = prefs.getUInt("cloud_int_s", DEFAULT_CLOUD_SEND_INTERVAL_S);
+  prefs.end();
+  seconds = constrain(seconds, MIN_CLOUD_SEND_INTERVAL_S,
+                      MAX_CLOUD_SEND_INTERVAL_S);
+  cloud_send_interval_ms = seconds * 1000UL;
+  Serial.printf("Intervalo cloud: %lu s\n",
+                static_cast<unsigned long>(cloud_send_interval_ms / 1000UL));
+}
+
+void save_cloud_send_interval_seconds(uint32_t seconds) {
+  seconds = constrain(seconds, MIN_CLOUD_SEND_INTERVAL_S,
+                      MAX_CLOUD_SEND_INTERVAL_S);
+  uint32_t ms = seconds * 1000UL;
+  if (ms == cloud_send_interval_ms) {
+    return;
+  }
+  cloud_send_interval_ms = ms;
+  prefs.begin("system", false);
+  prefs.putUInt("cloud_int_s", cloud_send_interval_ms / 1000UL);
+  prefs.end();
+  last_cloud_send_ms = 0;
+  Serial.printf("Intervalo cloud alterado: %lu s\n",
+                static_cast<unsigned long>(cloud_send_interval_ms / 1000UL));
+}
+
+void load_cloud_config_rev() {
+  prefs.begin("system", true);
+  cloud_config_rev_applied = prefs.getUInt("cloud_cfg_rev", 0);
+  prefs.end();
+  Serial.printf("Config cloud aplicada rev: %lu\n",
+                static_cast<unsigned long>(cloud_config_rev_applied));
+}
+
+void save_cloud_config_rev(uint32_t rev) {
+  if (rev == cloud_config_rev_applied) {
+    return;
+  }
+  cloud_config_rev_applied = rev;
+  prefs.begin("system", false);
+  prefs.putUInt("cloud_cfg_rev", cloud_config_rev_applied);
+  prefs.end();
+  Serial.printf("Config cloud marcada como aplicada rev %lu\n",
+                static_cast<unsigned long>(cloud_config_rev_applied));
 }
 
 bool ota_authenticated() {
@@ -1344,6 +1417,9 @@ void handle_config_page() {
   page += F("'></label><label>Maximo C<input type='number' name='limit_max' step='0.5' value='");
   page += String(temperature_max_c, 1);
   page += F("'></label>");
+  page += F("<label>Intervalo de envio para nuvem em segundos<input type='number' name='cloud_interval_s' min='60' max='3600' step='60' value='");
+  page += String(cloud_send_interval_ms / 1000UL);
+  page += F("'></label>");
   page += F("<p class='warn'>Ao trocar o modo, min/max do dia e historico local sao reiniciados.</p>");
   page += F("<label>Nome do termometro<input type='text' name='devname' maxlength='50' value='");
   page += html_escape(device_name);
@@ -1367,6 +1443,9 @@ void handle_save_config() {
   }
   if (server.hasArg("devname")) {
     save_device_name(server.arg("devname"));
+  }
+  if (server.hasArg("cloud_interval_s")) {
+    save_cloud_send_interval_seconds(server.arg("cloud_interval_s").toInt());
   }
   server.sendHeader("Location", "/", true);
   server.send(303, "text/plain", "");
@@ -1436,6 +1515,65 @@ String json_string_value(const String &json, const char *key) {
   int end = json.indexOf('"', pos + 1);
   if (end < 0) return "";
   return json.substring(pos + 1, end);
+}
+
+bool json_number_value(const String &json, const char *key, float &out) {
+  String pattern = String("\"") + key + "\"";
+  int pos = json.indexOf(pattern);
+  if (pos < 0) return false;
+  pos = json.indexOf(':', pos + pattern.length());
+  if (pos < 0) return false;
+  ++pos;
+  while (pos < json.length() && isspace(static_cast<uint8_t>(json[pos]))) {
+    ++pos;
+  }
+  int end = pos;
+  while (end < json.length()) {
+    char c = json[end];
+    if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.') {
+      ++end;
+    } else {
+      break;
+    }
+  }
+  if (end == pos) return false;
+  out = json.substring(pos, end).toFloat();
+  return isfinite(out);
+}
+
+void apply_cloud_config_response(const String &body) {
+  if (body.indexOf("\"config\"") < 0) {
+    return;
+  }
+
+  float rev_value = NAN;
+  if (!json_number_value(body, "config_rev", rev_value)) {
+    return;
+  }
+  uint32_t config_rev = uint32_t(rev_value + 0.5f);
+  if (config_rev == 0 || config_rev <= cloud_config_rev_applied) {
+    return;
+  }
+
+  bool applied = false;
+  float min_c = NAN;
+  float max_c = NAN;
+  bool has_min = json_number_value(body, "limit_min", min_c);
+  bool has_max = json_number_value(body, "limit_max", max_c);
+  if (has_min && has_max && min_c < max_c) {
+    save_temperature_limits(min_c, max_c);
+    applied = true;
+  }
+
+  float interval_s = NAN;
+  if (json_number_value(body, "cloud_interval_s", interval_s)) {
+    save_cloud_send_interval_seconds(uint32_t(interval_s + 0.5f));
+    applied = true;
+  }
+
+  if (applied) {
+    save_cloud_config_rev(config_rev);
+  }
 }
 
 String sha256_hex(const uint8_t hash[32]) {
@@ -1716,6 +1854,8 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += String(last_cloud_http_code);
   url += F("&queue_count=");
   url += String(cloud_queue_count);
+  url += F("&cloud_interval_s=");
+  url += String(cloud_send_interval_ms / 1000UL);
   url += F("&wifi_status=");
   url += url_encode(sta_connected ? sta_ip : String("SEM REDE"));
   url += F("&battery_v=");
@@ -1735,13 +1875,17 @@ bool cloud_send_sample(const CloudSample &sample) {
   String body = http.getString();
   http.end();
   feed_watchdog();
-  if (body.length() > 80) {
-    body = body.substring(0, 80);
+  String status_body = body;
+  if (status_body.length() > 80) {
+    status_body = status_body.substring(0, 80);
   }
 
-  Serial.printf("Cloud: HTTP %d resposta: %s\n", code, body.c_str());
+  Serial.printf("Cloud: HTTP %d resposta: %s\n", code, status_body.c_str());
   bool ok = code == 200 && body.indexOf("\"ok\":true") >= 0;
-  note_cloud_status(code, ok ? String("ok") : String("falha: ") + body);
+  if (ok && CLOUD_CONFIG_APPLY_ENABLED) {
+    apply_cloud_config_response(body);
+  }
+  note_cloud_status(code, ok ? String("ok") : String("falha: ") + status_body);
   return ok;
 }
 
@@ -2086,6 +2230,8 @@ void init_wifi() {
   load_sensor_mode();
   load_device_name();
   load_temperature_limits();
+  load_cloud_send_interval();
+  load_cloud_config_rev();
 
   Serial.printf("Codigo do termometro: %s\n", device_id.c_str());
   Serial.printf("AP config: %s senha 12345678 IP 192.168.4.1\n",
@@ -3219,7 +3365,8 @@ void loop() {
       push_history_sample(temp_c, humidity_pct);
       ui_dirty = true;
     }
-    if (last_cloud_send_ms == 0 || now - last_cloud_send_ms >= CLOUD_SEND_MS) {
+    if (last_cloud_send_ms == 0 ||
+        now - last_cloud_send_ms >= cloud_send_interval_ms) {
       last_cloud_send_ms = now;
       send_cloud_measurement(temp_c, humidity_pct);
     }
