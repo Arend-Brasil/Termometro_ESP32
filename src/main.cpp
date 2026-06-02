@@ -56,8 +56,9 @@ constexpr uint32_t MIN_CLOUD_SEND_INTERVAL_S =
 constexpr uint32_t MAX_CLOUD_SEND_INTERVAL_S =
     MAX_CLOUD_SEND_INTERVAL_MS / 1000UL;
 constexpr uint64_t BATTERY_SAMPLE_SLEEP_US = 5ULL * 60ULL * 1000ULL * 1000ULL;
-constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 3500;
+constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 8000;
 constexpr uint16_t CLOUD_HTTP_TIMEOUT_MS = 8000;
+constexpr int32_t CLOUD_MIN_RSSI = -82;
 constexpr bool CLOUD_CONFIG_APPLY_ENABLED = true;
 constexpr uint32_t INTRO_TIMEOUT_MS = 5000;
 constexpr uint32_t OTA_CONFIRM_MS = 30UL * 1000UL;
@@ -81,9 +82,10 @@ constexpr const char *CLOUD_URL =
     "https://script.google.com/macros/s/AKfycbyNDa3mWvWCrRzgCJwfNmlzy40BkUpI0ZcFrS_tEVs6nWOOw4MvDXUIhbbzEUNAfZgP/exec";
 constexpr const char *CLOUD_TOKEN = "DWL2026TESTE";
 constexpr const char *OTA_USER = "admin";
-constexpr const char *FIRMWARE_VERSION = "2026.06.01.01";
+constexpr const char *FIRMWARE_VERSION = "2026.06.02.01";
 constexpr const char *REMOTE_OTA_MANIFEST_URL =
     "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware_manifest.json";
+constexpr const char *FALLBACK_WIFI_SSID = "DWL-IOT";
 constexpr const char *COMPANY_INSTAGRAM = "@dwl_diagnostica";
 constexpr const char *COMPANY_PHONE = "TEL: definir";
 constexpr const char *COMPANY_EMAIL = "EMAIL: definir";
@@ -139,6 +141,12 @@ String reset_reason_text = "desconhecido";
 uint32_t boot_count = 0;
 int last_cloud_http_code = 0;
 String last_cloud_status = "boot";
+uint32_t wifi_disconnect_count = 0;
+uint8_t last_wifi_disconnect_reason = 0;
+uint32_t last_wifi_disconnect_ms = 0;
+String last_wifi_bssid = "";
+int32_t last_wifi_channel = 0;
+int32_t last_wifi_rssi = 0;
 bool external_power_present = true;
 float battery_voltage_v = NAN;
 
@@ -240,6 +248,9 @@ void init_power_monitor();
 void update_power_status();
 float read_battery_voltage();
 bool has_external_power();
+bool connect_known_networks();
+String wifi_diagnostic_summary();
+void handle_wifi_event(WiFiEvent_t event, WiFiEventInfo_t info);
 void init_sensor_bus();
 void run_battery_mode();
 void enter_battery_sleep();
@@ -827,13 +838,15 @@ void handle_wifi_page() {
   update_wifi_status();
 
   String page;
-  page.reserve(3600);
+  page.reserve(5600);
   page += F("<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>");
-  page += F("<title>Wi-Fi</title><style>body{font-family:Arial,sans-serif;margin:20px;max-width:620px;background:#101418;color:#f6f7f9}.card{border:1px solid #33404a;padding:14px;margin:12px 0;background:#182028}label{display:block;margin-top:14px;font-weight:700}input,select{box-sizing:border-box;width:100%;padding:10px;font-size:16px;background:#f6f7f9;color:#101418}button{margin-top:18px;padding:12px 16px;font-size:16px}code{background:#26313a;padding:2px 5px}a{color:#7fd7ff}</style></head><body>");
+  page += F("<title>Wi-Fi</title><style>body{font-family:Arial,sans-serif;margin:20px;max-width:760px;background:#101418;color:#f6f7f9}.card{border:1px solid #33404a;padding:14px;margin:12px 0;background:#182028}label{display:block;margin-top:14px;font-weight:700}input,select{box-sizing:border-box;width:100%;padding:10px;font-size:16px;background:#f6f7f9;color:#101418}button{margin-top:18px;padding:12px 16px;font-size:16px}code{background:#26313a;padding:2px 5px}a{color:#7fd7ff}table{width:100%;border-collapse:collapse;margin-top:10px}td,th{border-bottom:1px solid #33404a;padding:6px;text-align:left;font-size:13px}</style></head><body>");
   page += F("<h2>Configurar Wi-Fi</h2><p><a href='/'>Voltar ao painel</a> &nbsp; <a href='/ota'>Atualizar firmware</a></p>");
   page += F("<div class='card'><p>AP local: <code>");
   page += ap_enabled ? ap_ssid : String("desligado");
-  page += F("</code><br>Endereco local: <code>192.168.4.1</code></p>");
+  page += F("</code><br>Endereco local: <code>192.168.4.1</code><br>Diagnostico STA: <code>");
+  page += html_escape(wifi_diagnostic_summary());
+  page += F("</code></p>");
   page += F("<div class='card'><h3>Configurar Wi-Fi</h3><p>O aparelho guarda ate 5 redes e tenta conectar automaticamente.</p>");
   int network_count = WiFi.scanNetworks(false, true);
   page += F("<form method='post' action='/save'><label>Rede encontrada</label><select name='ssid'>");
@@ -858,6 +871,25 @@ void handle_wifi_page() {
   page += F("</select><label>Ou digite o nome manualmente</label><input name='ssid_manual' maxlength='32'>");
   page += F("<label>Senha da rede</label><input name='pass' type='password' maxlength='64'><button type='submit'>Salvar e conectar</button></form>");
   page += F("</div>");
+  page += F("<div class='card'><h3>Redes vistas pelo ESP32</h3><table><tr><th>SSID</th><th>RSSI</th><th>Canal</th><th>BSSID</th></tr>");
+  network_count = WiFi.scanNetworks(false, true);
+  if (network_count <= 0) {
+    page += F("<tr><td colspan='4'>Nenhuma rede encontrada</td></tr>");
+  } else {
+    for (int i = 0; i < network_count; ++i) {
+      page += F("<tr><td>");
+      page += html_escape(WiFi.SSID(i).length() ? WiFi.SSID(i) : String("<oculta>"));
+      page += F("</td><td>");
+      page += String(WiFi.RSSI(i));
+      page += F(" dBm</td><td>");
+      page += String(WiFi.channel(i));
+      page += F("</td><td><code>");
+      page += WiFi.BSSIDstr(i);
+      page += F("</code></td></tr>");
+    }
+  }
+  WiFi.scanDelete();
+  page += F("</table></div>");
   page += F("</body></html>");
   server.send(200, "text/html", page);
 }
@@ -955,6 +987,9 @@ void handle_data() {
   data += isnan(battery_voltage_v) ? String("null") : String(battery_voltage_v, 2);
   data += F(",\"external_power\":");
   data += external_power_present ? F("true") : F("false");
+  data += F(",\"wifi_diag\":\"");
+  data += json_escape(wifi_diagnostic_summary());
+  data += F("\"");
   data += F(",\"sample_seconds\":60,\"temp_history\":[");
   for (size_t i = 0; i < temp_history_count; ++i) {
     if (i > 0) data += ',';
@@ -1009,6 +1044,9 @@ void handle_version() {
   data += isnan(battery_voltage_v) ? String("null") : String(battery_voltage_v, 2);
   data += F(",\"external_power\":");
   data += external_power_present ? F("true") : F("false");
+  data += F(",\"wifi_diag\":\"");
+  data += json_escape(wifi_diagnostic_summary());
+  data += F("\"");
   data += F("}");
   server.send(200, "application/json", data);
 }
@@ -1800,6 +1838,11 @@ bool cloud_send_sample(const CloudSample &sample) {
     note_cloud_status(0, "sem Wi-Fi");
     return false;
   }
+  int32_t current_rssi = WiFi.RSSI();
+  if (current_rssi < CLOUD_MIN_RSSI) {
+    note_cloud_status(0, String("RSSI baixo: ") + current_rssi);
+    return false;
+  }
 
   WiFiClientSecure client;
   client.setInsecure();
@@ -1810,7 +1853,7 @@ bool cloud_send_sample(const CloudSample &sample) {
   http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
   String url;
-  url.reserve(560);
+  url.reserve(720);
   url += CLOUD_URL;
   url += F("?token=");
   url += url_encode(CLOUD_TOKEN);
@@ -1857,7 +1900,7 @@ bool cloud_send_sample(const CloudSample &sample) {
   url += F("&cloud_interval_s=");
   url += String(cloud_send_interval_ms / 1000UL);
   url += F("&wifi_status=");
-  url += url_encode(sta_connected ? sta_ip : String("SEM REDE"));
+  url += url_encode(wifi_diagnostic_summary());
   url += F("&battery_v=");
   url += isnan(battery_voltage_v) ? String("") : String(battery_voltage_v, 2);
   url += F("&external_power=");
@@ -1998,6 +2041,11 @@ void send_cloud_measurement(float temp_c, float humidity_pct) {
   CloudSample sample = {temp_c, humidity_pct, WiFi.RSSI(), millis(),
                         uint32_t(temp_history_count), 0};
   if (WiFi.status() != WL_CONNECTED) {
+    connect_known_networks();
+  }
+  update_wifi_status();
+  sample.rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
+  if (WiFi.status() != WL_CONNECTED) {
     Serial.println("Cloud: sem Wi-Fi, guardando leitura");
     note_cloud_status(0, "sem Wi-Fi");
     enqueue_cloud_sample(sample);
@@ -2015,6 +2063,68 @@ void send_cloud_measurement(float temp_c, float humidity_pct) {
   }
 }
 
+String wifi_diagnostic_summary() {
+  if (WiFi.status() != WL_CONNECTED) {
+    String summary = "SEM REDE";
+    if (last_wifi_disconnect_reason > 0) {
+      summary += F(" disc=");
+      summary += String(wifi_disconnect_count);
+      summary += F(" reason=");
+      summary += String(last_wifi_disconnect_reason);
+      summary += F("/");
+      summary += WiFi.disconnectReasonName(
+          static_cast<wifi_err_reason_t>(last_wifi_disconnect_reason));
+      if (last_wifi_disconnect_ms > 0) {
+        summary += F(" ha=");
+        summary += String((millis() - last_wifi_disconnect_ms) / 1000UL);
+        summary += F("s");
+      }
+    }
+    return summary;
+  }
+
+  String summary = sta_ip;
+  summary += F(" rssi=");
+  summary += String(last_wifi_rssi);
+  summary += F(" ch=");
+  summary += String(last_wifi_channel);
+  summary += F(" bssid=");
+  summary += last_wifi_bssid.length() ? last_wifi_bssid : WiFi.BSSIDstr();
+  summary += F(" disc=");
+  summary += String(wifi_disconnect_count);
+  if (last_wifi_disconnect_reason > 0) {
+    summary += F(" last=");
+    summary += String(last_wifi_disconnect_reason);
+    summary += F("/");
+    summary += WiFi.disconnectReasonName(
+        static_cast<wifi_err_reason_t>(last_wifi_disconnect_reason));
+  }
+  return summary;
+}
+
+void handle_wifi_event(WiFiEvent_t event, WiFiEventInfo_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+    last_wifi_channel = info.wifi_sta_connected.channel;
+    char bssid[18];
+    snprintf(bssid, sizeof(bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
+             info.wifi_sta_connected.bssid[0], info.wifi_sta_connected.bssid[1],
+             info.wifi_sta_connected.bssid[2], info.wifi_sta_connected.bssid[3],
+             info.wifi_sta_connected.bssid[4], info.wifi_sta_connected.bssid[5]);
+    last_wifi_bssid = bssid;
+    Serial.printf("Wi-Fi conectado: ch=%ld bssid=%s\n",
+                  static_cast<long>(last_wifi_channel), last_wifi_bssid.c_str());
+  } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    ++wifi_disconnect_count;
+    last_wifi_disconnect_reason = info.wifi_sta_disconnected.reason;
+    last_wifi_disconnect_ms = millis();
+    Serial.printf("Wi-Fi desconectou: reason=%u %s total=%lu\n",
+                  last_wifi_disconnect_reason,
+                  WiFi.disconnectReasonName(
+                      static_cast<wifi_err_reason_t>(last_wifi_disconnect_reason)),
+                  static_cast<unsigned long>(wifi_disconnect_count));
+  }
+}
+
 void update_wifi_status() {
   bool new_connected = WiFi.status() == WL_CONNECTED;
   String new_ip = new_connected ? WiFi.localIP().toString() : String("SEM REDE");
@@ -2023,6 +2133,11 @@ void update_wifi_status() {
   }
   sta_connected = new_connected;
   sta_ip = new_ip;
+  if (new_connected) {
+    last_wifi_rssi = WiFi.RSSI();
+    last_wifi_channel = WiFi.channel();
+    last_wifi_bssid = WiFi.BSSIDstr();
+  }
 }
 
 String wifi_key(const char *prefix, uint8_t index) {
@@ -2138,12 +2253,22 @@ bool connect_sta(const String &ssid, const String &pass) {
 
 bool connect_known_networks() {
   uint8_t count = stored_wifi_count();
+  String fallback_pass;
   for (uint8_t i = 0; i < count; ++i) {
     String ssid;
     String pass;
-    if (load_wifi_slot(i, ssid, pass) && connect_sta(ssid, pass)) {
-      return true;
+    if (load_wifi_slot(i, ssid, pass)) {
+      if (fallback_pass.length() == 0 && pass.length() > 0) {
+        fallback_pass = pass;
+      }
+      if (connect_sta(ssid, pass)) {
+        return true;
+      }
     }
+  }
+  if (fallback_pass.length() > 0 && connect_sta(FALLBACK_WIFI_SSID, fallback_pass)) {
+    save_wifi_network(FALLBACK_WIFI_SSID, fallback_pass);
+    return true;
   }
   sta_ssid = "";
   sta_ip = "SEM REDE";
@@ -2207,6 +2332,11 @@ void init_wifi() {
   device_id = id;
   ap_ssid = String("TERM-") + device_id + "-SETUP";
 
+  WiFi.onEvent(handle_wifi_event);
+  WiFi.persistent(false);
+  WiFi.setSleep(false);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.mode(WIFI_STA);
   ap_enabled = false;
   migrate_legacy_wifi();
@@ -2718,6 +2848,13 @@ void draw_wifi_view() {
        sta_connected ? COLOR_LIGHT_CYN : COLOR_RED, 1);
   text(12, 46, "IP", COLOR_LIGHT_CYN, 1);
   text(36, 46, sta_ip.c_str(), COLOR_LIGHT_CYN, 1);
+  if (sta_connected) {
+    char radio_text[40];
+    snprintf(radio_text, sizeof(radio_text), "RSSI %ld CH %ld",
+             static_cast<long>(last_wifi_rssi),
+             static_cast<long>(last_wifi_channel));
+    text(150, 46, radio_text, COLOR_LIGHT_CYN, 1);
+  }
 
   // Row of 3 buttons: AP | LIMITES | NOME
   uint16_t ap_btn = ap_enabled ? COLOR_FRAME : 0x39E7;

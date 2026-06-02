@@ -1,6 +1,6 @@
 {
-  "version": "2026.06.01.01",
+  "version": "2026.06.02.01",
   "firmware_url": "https://raw.githubusercontent.com/Arend-Brasil/Termometro_ESP32/main/firmware/firmware.bin",
-  "sha256": "408a44d3a409dab6b2fc6ef43c7269fa0c9219945e494e8349c649e53b5a3d8f",
-  "notes": "Config remota com config_rev; intervalo cloud configuravel; diagnostico USB"
+  "sha256": "9c10c6fc92f4d2e73251bf342bfe991cdd3290596e3a3dd78bd14b4e19a79d69",
+  "notes": "Fallback remoto para DWL-IOT usando senha Wi-Fi ja salva; diagnostico UniFi"
 }
